@@ -14,11 +14,14 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sync:openapi": "node scripts/sync-openapi.ts",
+    "check:openapi": "node scripts/check-openapi.ts"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.42.2",
-    "astro": "^7.3.3"
+    "astro": "^7.3.3",
+    "starlight-openapi": "^0.26.2"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",

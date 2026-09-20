@@ -1,0 +1,3885 @@
+openapi: 3.1.0
+
+# The system contract. Hand-authored, spec-first, versioned with the code.
+
+info:
+  title: Alexandryn system API
+  version: 1.0.0
+  description: >-
+    The contract between the Go server and every client (the Electron
+    renderer and any LAN browser). Errors share one shape across every
+    endpoint.
+
+servers:
+  - url: /
+    description: The Go server's own origin (loopback by default, constitution §6).
+
+# Path-based versioning. Health lives at the root, outside the versioned
+# surface, because it predates and is independent of it.
+paths:
+  /healthz:
+    get:
+      operationId: getHealthz
+      summary: Liveness — is the process accepting HTTP connections
+      description: >-
+        200 the instant the process can serve HTTP, independent of
+        PostgreSQL state. Never blocks on the database.
+      security: []
+      responses:
+        '200':
+          description: The process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Empty'
+              example: {}
+
+  /readyz:
+    get:
+      operationId: getReadyz
+      summary: Readiness — can the process actually serve data
+      description: >-
+        200 once PostgreSQL is connected and a liveness check succeeds;
+        503 with an error body ("not yet started" before the pool is set,
+        "lost the connection" if the ping fails) otherwise.
+      security: []
+      responses:
+        '200':
+          description: The process is ready to serve data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Empty'
+              example: {}
+        '503':
+          description: The process is not ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: unavailable
+                message: not yet started
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/bootstrap:
+    get:
+      operationId: getBootstrap
+      summary: Capability probe for the current caller
+      description: >-
+        Answers which UI capabilities (sources, import, settings, system,
+        network) the caller may use, based on role and, for readers, the
+        active library's upload setting. Deliberately public (outside the
+        /api/v1 prefix, exempt from AuthMiddleware) so the frontend can
+        probe capabilities before a session exists; an absent or invalid
+        Authorization header simply yields the anonymous capability set
+        (all false) rather than a 401.
+      security: []
+      responses:
+        '200':
+          description: The caller's current capability set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootstrapResponse'
+              example:
+                capabilities:
+                  sources: false
+                  import: false
+                  settings: false
+                  system: false
+                  network: false
+
+  # ── Library domain endpoints ─────────────────────────────────────────
+
+  /api/v1/library:
+    get:
+      operationId: listLibrary
+      summary: List works in the library (cursor-paginated)
+      description: >-
+        Returns a cursor-paginated list of Works reachable via the given
+        filter. Default limit 50, max 100.
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Opaque cursor from a previous response's nextCursor. Omit
+            for the first page.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: >-
+            Number of results per page. Must be 1–100 inclusive.
+            A value outside this range, a non-integer, or zero is
+            400 InvalidInput (never silently clamped).
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 200
+          description: >-
+            Full-text search query (PostgreSQL tsquery, parameterized). Max 200 characters.
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [owned, wanted, all]
+            default: all
+          description: >-
+            Closed vocabulary. An unrecognized value is 400 InvalidInput.
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [added_at, title]
+            default: added_at
+          description: >-
+            Closed vocabulary. An unrecognized value is 400 InvalidInput.
+      responses:
+        '200':
+          description: A page of works.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryPage'
+              example:
+                works:
+                  - id: 01JXXXXXXXXXXXXXXXXXXXXXXX
+                    title: Middlemarch
+                    subtitle: A Study of Provincial Life
+                    authors:
+                      - George Eliot
+                    isOwned: true
+                    collections:
+                      - id: 01JXXXXXXXXXXXXXXXXXXXXXXZ
+                        name: Classics
+                        addedAt: '2026-01-20T08:00:00Z'
+                    addedAt: '2026-01-15T10:00:00Z'
+                nextCursor: null
+
+        '400':
+          description: Invalid parameter value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "sort: unrecognized value \"relevance\" — must be one of: added_at, title"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/works/{id}:
+    get:
+      operationId: getWork
+      summary: Get a single work's detail
+      description: >-
+        Returns one Work's metadata, owned editions (with formats), and
+        collection memberships. Absent-but-optional fields (cover URL,
+        availability) are simply missing from the response object, not
+        present-but-null.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: WorkID (internal). Malformed shape → 400; not found → 404.
+      responses:
+        '200':
+          description: The work detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkDetail'
+              example:
+                id: "01JXXXXXXXXXXXXXXXXXXXXXXX"
+                title: "Middlemarch"
+                subtitle: ""
+                authors: ["George Eliot"]
+                subjects: ["Fiction"]
+                originalLanguage: "en"
+                ownedEditions:
+                  - id: "01JXXXXXXXXXXXXXXXXXXXXXXY"
+                    language: "en"
+                    isbn: "9780141439549"
+                    publisher: "Penguin Classics"
+                    publicationYear: 2003
+                    addedAt: "2026-01-15T10:00:00Z"
+                    formats: ["epub"]
+                collections:
+                  - id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                    name: "Classics"
+                    addedAt: "2026-01-20T08:00:00Z"
+        '400':
+          description: Malformed WorkID (not a valid ID shape).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "id: not a valid work ID"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: No work with that ID exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "no work with that id"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/collections:
+    get:
+      operationId: listCollections
+      summary: List all collections (unpaginated)
+      description: >-
+        Returns every collection with its work count. No pagination —
+        household-scale collection count assumed manageable.
+      responses:
+        '200':
+          description: All collections.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [collections]
+                properties:
+                  collections:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CollectionSummary'
+              example:
+                collections:
+                  - id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                    name: "Classics"
+                    workCount: 1
+    post:
+      operationId: createCollection
+      summary: Create a new collection
+      description: >-
+        Creates a new collection. Name is validated
+        (max 100 chars, no control characters).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionCreate'
+      responses:
+        '201':
+          description: The created collection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionDetail'
+              example:
+                id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                name: "Classics"
+                works: []
+        '400':
+          description: Invalid collection name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "name: exceeds maximum length of 100 characters"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/collections/{id}:
+    get:
+      operationId: getCollection
+      summary: Get a collection's detail including member works
+      description: >-
+        Returns one collection and its member Works, each with the
+        per-membership added-at timestamp.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: CollectionID. Malformed → 400; not found → 404.
+      responses:
+        '200':
+          description: The collection detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionDetail'
+              example:
+                id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                name: "Classics"
+                works:
+                  - id: "01JXXXXXXXXXXXXXXXXXXXXXXX"
+                    title: "Middlemarch"
+                    subtitle: "A Study of Provincial Life"
+                    authors:
+                      - George Eliot
+                    isOwned: true
+                    collections:
+                      - id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                        name: "Classics"
+                        addedAt: "2026-01-20T08:00:00Z"
+                    addedAt: "2026-01-15T10:00:00Z"
+
+        '400':
+          description: Malformed CollectionID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "id: not a valid collection ID"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: No collection with that ID exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "no collection with that id"
+                correlationId: 00000000-0000-0000-0000-000000000000
+    patch:
+      operationId: renameCollection
+      summary: Rename a collection
+      description: >-
+        Renames a collection. Membership changes go through
+        POST/DELETE /api/v1/collections/{id}/works, never bundled here.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionRename'
+      responses:
+        '200':
+          description: The renamed collection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionDetail'
+              example:
+                id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                name: "Renamed Collection"
+                works: []
+        '400':
+          description: Invalid name or malformed CollectionID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "name: contains control characters"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: No collection with that ID exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "no collection with that id"
+                correlationId: 00000000-0000-0000-0000-000000000000
+    delete:
+      operationId: deleteCollection
+      summary: Delete a collection
+      description: >-
+        Deletes the collection and its membership rows. Non-cascading —
+        Works, Editions, and LibraryEntries are untouched.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted successfully. No body.
+        '400':
+          description: Malformed CollectionID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "id: not a valid collection ID"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: No collection with that ID exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "no collection with that id"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/collections/{id}/works:
+    post:
+      operationId: addWorkToCollection
+      summary: Add a work to a collection
+      description: >-
+        Adds a Work to a Collection. Idempotent — adding an already-member
+        Work is a no-op (200, original added_at preserved, ON CONFLICT
+        DO NOTHING).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: CollectionID. Malformed → 400; not found → 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionMembershipAdd'
+      responses:
+        '200':
+          description: Work is now a member (or already was).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionDetail'
+              example:
+                id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                name: "Classics"
+                works: []
+        '400':
+          description: Malformed ID or missing workId.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "workId: missing required field"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: Collection or Work not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "no collection with that id"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/collections/{id}/works/{workId}:
+    delete:
+      operationId: removeWorkFromCollection
+      summary: Remove a work from a collection
+      description: >-
+        Removes the specific (collectionId, workId) membership row — a
+        hard delete. The Work, Edition, and every other Collection's
+        membership are untouched. A re-add after removal is a new
+        membership with a fresh added_at.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: CollectionID.
+        - name: workId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: WorkID. Malformed → 400; not found → 404.
+      responses:
+        '204':
+          description: Removed successfully. No body.
+        '400':
+          description: Malformed ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "workId: not a valid work ID"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: Collection or membership not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "no membership found for that work in this collection"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  # ── Metadata discovery endpoints ─────────────────────────────────────
+
+  /api/v1/discover:
+    get:
+      operationId: searchDiscover
+      summary: Search Open Library for works (offset-paginated)
+      description: >-
+        Proxies search query to Open Library, returning normalised bibliographic
+        results.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          description: Search query string (title, author, or keyword).
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+          description: Number of items per page.
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: Non-negative offset into the result set.
+      responses:
+        '200':
+          description: Paginated search results.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NormalisedSearchResponse'
+              example:
+                items:
+                  - openLibraryWorkKey: "OL82563W"
+                    title: "Middlemarch"
+                    authors:
+                      - openLibraryAuthorKey: "OL21594A"
+                        name: "George Eliot"
+                    firstPublishYear: 1871
+                    coverUrl: "/api/v1/discover/covers/8256301"
+                    editionCount: 42
+                total: 1
+                limit: 20
+                offset: 0
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "q: required parameter missing"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '503':
+          description: Open Library is unavailable or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: unavailable
+                message: "Open Library is temporarily unavailable"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/discover/works/{openLibraryId}:
+    get:
+      operationId: getDiscoverWork
+      summary: Fetch and normalise an Open Library work and its editions
+      description: >-
+        Fetches an Open Library work record by its key (e.g. OL82563W), normalises
+        its bibliographic fields, and resolves up to 50 editions and 20 authors.
+      parameters:
+        - name: openLibraryId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^OL[0-9]+W$'
+          description: Open Library work key (e.g. OL82563W).
+      responses:
+        '200':
+          description: Normalised work detail and editions list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoverWorkDetail'
+              example:
+                work:
+                  title: "Middlemarch"
+                  subtitle: "A Study of Provincial Life"
+                  description: "Middlemarch, A Study of Provincial Life is a novel by Mary Anne Evans, writing as George Eliot."
+                  subjects:
+                    - "Provincial life"
+                    - "Fiction"
+                  authors:
+                    - openLibraryAuthorKey: "OL21594A"
+                      name: "George Eliot"
+                  coverUrl: "/api/v1/discover/covers/8256301"
+                editions:
+                  - title: "Middlemarch"
+                    publisher: "Penguin Classics"
+                    publishDate: "2003"
+                    language: "en"
+                    openLibraryEditionKey: "OL7353617M"
+                    coverUrl: "/api/v1/discover/covers/8256301"
+        '400':
+          description: Malformed Open Library work ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "openLibraryId: malformed Open Library work ID"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: Work not found on Open Library.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "work not found on Open Library"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '503':
+          description: Open Library is unavailable or rate limit exceeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: unavailable
+                message: "Open Library is temporarily unavailable"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/discover/covers/{coverId}:
+    get:
+      operationId: getDiscoverCover
+      summary: Fetch or serve cached cover image for an Open Library cover ID
+      description: >-
+        Serves binary cover image from local disk cache or proxies from Open Library
+        Covers API with immutable caching.
+      parameters:
+        - name: coverId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+          description: Positive numeric Open Library cover ID.
+      responses:
+        '200':
+          description: Cover image JPEG binary data.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: "public, max-age=31536000, immutable"
+            X-Metadata-Cache:
+              schema:
+                type: string
+                enum: [hit, miss]
+              example: "hit"
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid cover ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "coverId: must be a positive integer"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: Cover not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "cover not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '503':
+          description: Open Library Covers API is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: unavailable
+                message: "Open Library Covers API is temporarily unavailable"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  # ── Sources ──────────────────────────────────────────────────────────
+
+  /api/v1/sources:
+    get:
+      operationId: listSources
+      summary: List every configured source
+      description: >-
+        Returns all configured sources with health status and detected
+        capabilities. A stored credential is represented only as
+        `hasCredential` — the username and password are never echoed back.
+      responses:
+        '200':
+          description: All configured sources.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceListResponse'
+              example:
+                sources:
+                  - id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                    label: "Personal OPDS"
+                    kind: opds
+                    config:
+                      baseUrl: "https://opds.example.org/catalog"
+                    hasCredential: true
+                    health:
+                      status: reachable
+                      checkedAt: "2026-08-31T12:00:00Z"
+                      detail: null
+                    capabilities:
+                      canList: true
+                      canSearch: true
+                      canDownload: true
+    post:
+      operationId: createSource
+      summary: Add a source
+      description: >-
+        Creates a source and runs a synchronous health check as part of
+        creation. The source is created even if the health check fails —
+        an unreachable source now may be reachable later.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceCreate'
+      responses:
+        '201':
+          description: The created source, with its create-time health result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Source'
+              example:
+                id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                label: "Personal OPDS"
+                kind: opds
+                config:
+                  baseUrl: "https://opds.example.org/catalog"
+                hasCredential: true
+                health:
+                  status: reachable
+                  checkedAt: "2026-08-31T12:00:00Z"
+                  detail: null
+                capabilities:
+                  canList: true
+                  canSearch: false
+                  canDownload: true
+        '400':
+          description: Invalid source configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "kind: must be one of local-folder, opds"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/sources/{id}:
+    get:
+      operationId: getSource
+      summary: Get one source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: SourceID (internal).
+      responses:
+        '200':
+          description: The source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Source'
+              example:
+                id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                label: "Studio NAS"
+                kind: local-folder
+                config:
+                  basePath: "/srv/books"
+                hasCredential: false
+                health:
+                  status: reachable
+                  checkedAt: "2026-08-31T12:00:00Z"
+                  detail: null
+                capabilities:
+                  canList: true
+                  canSearch: false
+                  canDownload: true
+        '404':
+          description: No source with that id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "source not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+    patch:
+      operationId: updateSource
+      summary: Update a source
+      description: >-
+        Updates label, config, or credential and re-runs the health
+        check. A credential update replaces the stored value entirely —
+        there is no partial-field credential update.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceUpdate'
+      responses:
+        '200':
+          description: The updated source, with its re-checked health result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Source'
+              example:
+                id: "01JXXXXXXXXXXXXXXXXXXXXXXZ"
+                label: "Personal OPDS (renamed)"
+                kind: opds
+                config:
+                  baseUrl: "https://opds.example.org/catalog"
+                hasCredential: true
+                health:
+                  status: reachable
+                  checkedAt: "2026-08-31T12:05:00Z"
+                  detail: null
+                capabilities:
+                  canList: true
+                  canSearch: true
+                  canDownload: true
+        '400':
+          description: Invalid update.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "config.baseUrl: must be an http or https URL"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: No source with that id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "source not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+    delete:
+      operationId: deleteSource
+      summary: Remove a source
+      description: >-
+        Removes the source and cascades to every SourceOffering
+        referencing it, atomically. LibraryEntry records are untouched.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: The source was removed.
+        '404':
+          description: No source with that id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "source not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/sources/{id}/health-check:
+    post:
+      operationId: checkSourceHealth
+      summary: Probe a source's reachability now
+      description: >-
+        Runs a lightweight reachability probe and re-detects capabilities.
+        `detail` is a closed vocabulary — never a raw error message or
+        response body.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The probe result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceHealth'
+              example:
+                status: unreachable
+                checkedAt: "2026-08-31T12:10:00Z"
+                detail: timeout
+        '404':
+          description: No source with that id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "source not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/sources/{id}/browse:
+    get:
+      operationId: browseSource
+      summary: List a source's contents as unmatched candidates
+      description: >-
+        Returns a page of SourceCandidate items — a title/author guess, a
+        FileReference, and an optional cover URL. Never a domain
+        SourceOffering. The cursor is opaque and server-validated; an
+        off-origin continuation link is rejected before any fetch.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque pagination token from a previous response.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: A page of candidates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceCandidatePage'
+              example:
+                items:
+                  - title: "The Left Hand of Darkness"
+                    author: "Ursula K. Le Guin"
+                    fileReference:
+                      referenceId: "left-hand-of-darkness.epub"
+                      format: "EPUB"
+                      sizeBytes: 512000
+                    coverUrl: null
+                nextCursor: null
+        '400':
+          description: Invalid cursor or limit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "limit: must be an integer between 1 and 50"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: No source with that id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "source not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '503':
+          description: >-
+            The source is unavailable — unreachable, a redirect, a
+            decryption failure, or the outbound concurrency cap was
+            reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: unavailable
+                message: "source is unavailable right now"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/sources/{id}/search:
+    get:
+      operationId: searchSource
+      summary: Search a source's catalog
+      description: >-
+        Same SourceCandidate shape as browse, via the source's advertised
+        search mechanism. Returns 409 when the source's detected
+        CanSearch is false — never a silent empty result.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        '200':
+          description: A page of candidates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceCandidatePage'
+              example:
+                items:
+                  - title: "A Wizard of Earthsea"
+                    author: "Ursula K. Le Guin"
+                    fileReference:
+                      referenceId: "wizard-of-earthsea.epub"
+                      format: "EPUB"
+                      sizeBytes: null
+                    coverUrl: "https://opds.example.org/covers/earthsea.jpg"
+                nextCursor: "eyJwIjoyfQ"
+        '400':
+          description: Invalid query parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "q: search query must be non-empty"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: No source with that id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "source not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '409':
+          description: This source does not support search.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: conflict
+                message: "this source does not support search"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '503':
+          description: The source is unavailable right now.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: unavailable
+                message: "source is unavailable right now"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/import/discover:
+    post:
+      operationId: discoverImport
+      summary: Enumerate files from a source and enqueue import jobs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportDiscoverRequest'
+      responses:
+        '202':
+          description: Import discovery accepted and jobs enqueued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportDiscoverResponse'
+              example:
+                discoveredCount: 5
+                skippedCount: 1
+                jobIds:
+                  - "01JJOB1"
+                  - "01JJOB2"
+        '400':
+          description: Source cannot list or invalid input.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "source does not support listing"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: Source not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "source not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/import/candidates:
+    get:
+      operationId: listImportCandidates
+      summary: List import candidates
+      parameters:
+        - name: sourceId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [queued, pending, auto_imported, confirmed, rejected, failed]
+      responses:
+        '200':
+          description: List of import candidates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportCandidateListResponse'
+              example:
+                candidates:
+                  - id: "01JCAND1"
+                    sourceId: "01JSRC1"
+                    fileReference:
+                      id: "dune.epub"
+                      format: "epub"
+                      sizeBytes: 1048576
+                    status: "pending"
+                    extractedMetadata:
+                      title: "Dune"
+                      authors:
+                        - "Frank Herbert"
+                      isbn: "9780441172719"
+                    matchCandidates:
+                      - type: "open_library_work"
+                        confidence: "high"
+                        title: "Dune"
+                        author: "Frank Herbert"
+                        openLibraryWorkKey: "OL893415W"
+                    createdAt: "2026-09-01T12:00:00Z"
+                    updatedAt: "2026-09-01T12:00:00Z"
+        '400':
+          description: Invalid status query param.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "invalid status filter"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/import/candidates/{id}/confirm:
+    post:
+      operationId: confirmImportCandidate
+      summary: Confirm an import candidate resolution
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportConfirmRequest'
+      responses:
+        '200':
+          description: Candidate successfully confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportCandidate'
+              example:
+                id: "01JCAND1"
+                sourceId: "01JSRC1"
+                fileReference:
+                  id: "dune.epub"
+                  format: "epub"
+                  sizeBytes: 1048576
+                status: "confirmed"
+                createdAt: "2026-09-01T12:00:00Z"
+                updatedAt: "2026-09-01T12:00:00Z"
+        '400':
+          description: Invalid action or payload.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: invalid_input
+                message: "invalid action"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '404':
+          description: Candidate not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "candidate not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '409':
+          description: Candidate not in pending status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: conflict
+                message: "candidate is not pending"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/import/candidates/{id}/reject:
+    post:
+      operationId: rejectImportCandidate
+      summary: Reject an import candidate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Candidate rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportCandidate'
+              example:
+                id: "01JCAND1"
+                sourceId: "01JSRC1"
+                fileReference:
+                  id: "dune.epub"
+                  format: "epub"
+                  sizeBytes: 1048576
+                status: "rejected"
+                createdAt: "2026-09-01T12:00:00Z"
+                updatedAt: "2026-09-01T12:00:00Z"
+        '404':
+          description: Candidate not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "candidate not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+        '409':
+          description: Candidate not in pending status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: conflict
+                message: "candidate is not pending"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/import/candidates/{id}/cover:
+    get:
+      operationId: getImportCandidateCover
+      summary: Serve extracted cover image for an import candidate
+      description: >-
+        Serves binary cover image from candidate's extracted metadata.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Import candidate ID.
+      responses:
+        '200':
+          description: Candidate cover image binary data.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+              example: "private, max-age=86400"
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Candidate or cover image not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: not_found
+                message: "cover not found"
+                correlationId: 00000000-0000-0000-0000-000000000000
+
+  /api/v1/library/editions/{editionId}/reader/content/{path}:
+    get:
+      operationId: getReaderContent
+      summary: Serve one sanitised resource from inside an owned Edition's EPUB
+      parameters:
+        - name: editionId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Sanitised HTML/CSS or raw binary, with a strict Content-Security-Policy.
+          content:
+            application/xhtml+xml:
+              schema: { type: string }
+            text/css:
+              schema: { type: string }
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '400':
+          description: Malformed path, or an unservable resource type (standalone SVG, executable).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_input, message: "resource path must be relative", correlationId: 00000000-0000-0000-0000-000000000000 }
+        '404':
+          description: Edition not owned, or no such entry in the book.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: not_found, message: "no such resource in this book", correlationId: 00000000-0000-0000-0000-000000000000 }
+        '503':
+          description: The book's source is unreachable, or the file cannot be opened.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: unavailable, message: "this book's source isn't reachable right now", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/reading/works/{workId}/progress:
+    get:
+      operationId: getReadingProgress
+      summary: Get the canonical reading progress for a Work
+      parameters:
+        - { name: workId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The canonical progress, or null if none exists yet.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadingProgressResponse' }
+              example: { progress: null }
+    post:
+      operationId: reportReadingProgress
+      summary: Report reading progress, reconciled by max over (epoch, percentage)
+      parameters:
+        - { name: workId, in: path, required: true, schema: { type: string } }
+        - name: X-Device-Id
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProgressReportRequest' }
+      responses:
+        '200':
+          description: The reconciled canonical value and the outcome tag.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProgressReportResult' }
+              example:
+                progress: { percentage: 0.42, epoch: 0, precisePosition: null, observedAt: "2026-09-01T12:00:00Z" }
+                outcome: advanced
+        '400':
+          description: Missing or malformed X-Device-Id, percentage, observedEpoch, CFI, or editionId.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_input, message: "X-Device-Id must be a version 4 UUID", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/reading/editions/{editionId}/bookmarks:
+    get:
+      operationId: listBookmarks
+      summary: List bookmarks for an Edition
+      parameters:
+        - { name: editionId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The Edition's bookmarks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookmarkListResponse' }
+              example: { bookmarks: [] }
+    post:
+      operationId: createBookmark
+      summary: Create a bookmark at a CFI
+      parameters:
+        - { name: editionId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BookmarkCreateRequest' }
+      responses:
+        '201':
+          description: The created bookmark.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BookmarkResponse' }
+              example: { bookmark: { id: "bmk_1", editionId: "edn_1", cfi: "epubcfi(/6/4!/10)", label: "the turn", createdAt: "2026-09-01T12:00:00Z" } }
+        '400':
+          description: Malformed CFI or label.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_input, message: "position is not an epubcfi(...) value", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/reading/bookmarks/{bookmarkId}:
+    delete:
+      operationId: deleteBookmark
+      summary: Delete a bookmark
+      parameters:
+        - { name: bookmarkId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Deleted. }
+        '404':
+          description: No bookmark with that id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: not_found, message: "bookmark not found", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/reading/editions/{editionId}/highlights:
+    get:
+      operationId: listHighlights
+      summary: List highlights for an Edition
+      parameters:
+        - { name: editionId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The Edition's highlights.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HighlightListResponse' }
+              example: { highlights: [] }
+    post:
+      operationId: createHighlight
+      summary: Create a highlight over a CFI range
+      parameters:
+        - { name: editionId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HighlightCreateRequest' }
+      responses:
+        '201':
+          description: The created highlight.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HighlightResponse' }
+              example: { highlight: { id: "hlt_1", editionId: "edn_1", startCfi: "epubcfi(/6/4!/10/1:0)", endCfi: "epubcfi(/6/4!/10/1:88)", note: "", category: "blue", createdAt: "2026-09-01T12:00:00Z" } }
+        '400':
+          description: Malformed CFI, or endCfi sorts before startCfi.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_input, message: "endCfi must not sort before startCfi", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/reading/highlights/{highlightId}:
+    patch:
+      operationId: patchHighlight
+      summary: Update a highlight's note or category (never its position)
+      parameters:
+        - { name: highlightId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HighlightPatchRequest' }
+      responses:
+        '200':
+          description: The updated highlight.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HighlightResponse' }
+              example: { highlight: { id: "hlt_1", editionId: "edn_1", startCfi: "epubcfi(/6/4!/10/1:0)", endCfi: "epubcfi(/6/4!/10/1:88)", note: "a thought", category: "blue", createdAt: "2026-09-01T12:00:00Z" } }
+        '400':
+          description: Malformed note or category.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_input, message: "note: too long", correlationId: 00000000-0000-0000-0000-000000000000 }
+        '404':
+          description: No highlight with that id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: not_found, message: "highlight not found", correlationId: 00000000-0000-0000-0000-000000000000 }
+    delete:
+      operationId: deleteHighlight
+      summary: Delete a highlight
+      parameters:
+        - { name: highlightId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Deleted. }
+        '404':
+          description: No highlight with that id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: not_found, message: "highlight not found", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/reading/preferences:
+    get:
+      operationId: getReadingPreferences
+      summary: Get this device's reading preferences (system defaults if none stored)
+      parameters:
+        - { name: X-Device-Id, in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The device's preferences.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadingPreferencesResponse' }
+              example: { preferences: { font: "serif", fontSize: 19, lineSpacing: 1.5, theme: "light", layoutMode: "paginated", columnWidth: "default" } }
+    put:
+      operationId: putReadingPreferences
+      summary: Replace this device's reading preferences
+      parameters:
+        - { name: X-Device-Id, in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReadingPreferences' }
+      responses:
+        '200':
+          description: The stored preferences.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadingPreferencesResponse' }
+              example: { preferences: { font: "Newsreader", fontSize: 22, lineSpacing: 1.7, theme: "sepia", layoutMode: "scroll", columnWidth: "wide" } }
+        '400':
+          description: An out-of-range or unrecognised preference value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: invalid_input, message: "theme must be light, sepia, or dark", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/reading/export:
+    get:
+      operationId: exportReadingData
+      summary: Download reading progress, bookmarks, and highlights as versioned JSON
+      parameters:
+        - name: workId
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: The versioned export document (Content-Disposition attachment).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadingExportDocument' }
+              example:
+                schemaVersion: 1
+                exportedAt: "2026-09-01T12:00:00Z"
+                works: []
+                editions: []
+        '404':
+          description: The scoped workId does not exist.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: not_found, message: "no work with that id", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  # ── Authentication, RBAC & Multi-Library Namespacing ─────────────────
+
+  /api/v1/auth/setup/status:
+    get:
+      operationId: getSetupStatus
+      summary: Check if initial admin account setup is required
+      security: []
+      responses:
+        '200':
+          description: System initialization status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [isSetup]
+                properties:
+                  isSetup: { type: boolean }
+              example:
+                isSetup: false
+
+  /api/v1/auth/setup:
+    post:
+      operationId: setupAdmin
+      summary: Initialize system with master admin account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        '201':
+          description: Master admin registered successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+              example:
+                user:
+                  id: "00000000-0000-0000-0000-000000000001"
+                  username: "librarian"
+                  email: "admin@alexandryn.org"
+                  role: "admin"
+                accessToken: "mock.jwt.token"
+                refreshToken: "mock-refresh-token"
+        '409':
+          description: System is already initialized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: conflict
+                message: "system is already initialized"
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: Authenticate user with credentials
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [emailOrUsername, password]
+              properties:
+                emailOrUsername: { type: string }
+                password: { type: string }
+                enrolmentGrant: { type: string }
+      responses:
+        '200':
+          description: Authentication successful or MFA required
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+              example:
+                user:
+                  id: "00000000-0000-0000-0000-000000000001"
+                  username: "librarian"
+                  email: "admin@alexandryn.org"
+                  role: "admin"
+                accessToken: "mock.jwt.token"
+                refreshToken: "mock-refresh-token"
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: unauthorized
+                message: "invalid username or password"
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshToken
+      summary: Rotate refresh token and issue new access token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: Fresh access token and rotated refresh token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+              example:
+                accessToken: "mock.jwt.token2"
+                refreshToken: "mock-refresh-token2"
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: unauthorized
+                message: "invalid refresh token"
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Revoke refresh token and end session
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '204':
+          description: Logged out successfully
+
+  /api/v1/auth/password-reset/request:
+    post:
+      operationId: requestPasswordReset
+      summary: Request a password reset link
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '200':
+          description: Password reset link dispatched if account exists
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message: { type: string }
+              example:
+                message: "if the email is registered, a password reset link has been dispatched"
+
+  /api/v1/auth/password-reset/confirm:
+    post:
+      operationId: confirmPasswordReset
+      summary: Confirm password reset and set new password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, newPassword]
+              properties:
+                token: { type: string }
+                newPassword: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        '200':
+          description: Password reset completed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success: { type: boolean }
+              example:
+                success: true
+
+  /api/v1/auth/mfa/totp/setup:
+    post:
+      operationId: setupTOTP
+      summary: Generate TOTP secret and recovery codes for 2FA enrollment
+      description: >-
+        Requires the account password. Generating a new secret overwrites
+        any existing enrolment, so the access token alone is not enough.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        '200':
+          description: TOTP configuration payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, keyUri, recoveryCodes]
+                properties:
+                  secret: { type: string }
+                  keyUri: { type: string }
+                  recoveryCodes:
+                    type: array
+                    items: { type: string }
+              example:
+                secret: "JBSWY3DPEHPK3PXP"
+                keyUri: "otpauth://totp/Alexandryn:librarian?secret=JBSWY3DPEHPK3PXP&issuer=Alexandryn"
+                recoveryCodes:
+                  - "ABCD-1234-EF"
+                  - "5678-GHIJ-90"
+
+  /api/v1/auth/mfa/totp/confirm:
+    post:
+      operationId: confirmTOTP
+      summary: Verify first TOTP code to activate 2FA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '200':
+          description: 2FA activated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled]
+                properties:
+                  enabled: { type: boolean }
+              example:
+                enabled: true
+
+  /api/v1/auth/mfa/totp/verify:
+    post:
+      operationId: verifyTOTP
+      summary: Verify 2FA challenge code during login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfaTicket]
+              properties:
+                mfaTicket: { type: string }
+                code: { type: string }
+                recoveryCode: { type: string }
+                enrolmentGrant:
+                  type: string
+                  description: >-
+                    Resent from the login step when MFA is enabled, so device
+                    pairing completes once login actually finishes rather than
+                    on the password-only step.
+      responses:
+        '200':
+          description: 2FA verification successful, tokens issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+              example:
+                user:
+                  id: "00000000-0000-0000-0000-000000000001"
+                  username: "librarian"
+                  email: "admin@alexandryn.org"
+                  role: "admin"
+                accessToken: "mock.jwt.token"
+                refreshToken: "mock-refresh-token"
+
+  /api/v1/auth/mfa/totp/disable:
+    post:
+      operationId: disableTOTP
+      summary: Disable 2FA with password confirmation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        '200':
+          description: 2FA disabled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [disabled]
+                properties:
+                  disabled: { type: boolean }
+              example:
+                disabled: true
+
+  /api/v1/libraries:
+    get:
+      operationId: listLibraries
+      summary: List libraries accessible to current user
+      responses:
+        '200':
+          description: Accessible libraries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [libraries]
+                properties:
+                  libraries:
+                    type: array
+                    items: { $ref: '#/components/schemas/Library' }
+              example:
+                libraries:
+                  - id: "00000000-0000-0000-0000-000000000001"
+                    name: "Default Library"
+                    description: "Main library namespace"
+                    allowReaderUploads: false
+                    createdAt: "2026-09-01T12:00:00Z"
+                    updatedAt: "2026-09-01T12:00:00Z"
+    post:
+      operationId: createLibrary
+      summary: Create a new library namespace (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                description: { type: string }
+                allowReaderUploads: { type: boolean }
+      responses:
+        '201':
+          description: Library created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [library]
+                properties:
+                  library: { $ref: '#/components/schemas/Library' }
+              example:
+                library:
+                  id: "00000000-0000-0000-0000-000000000002"
+                  name: "Comics"
+                  description: "Comics and Manga"
+                  allowReaderUploads: true
+                  createdAt: "2026-09-01T12:00:00Z"
+                  updatedAt: "2026-09-01T12:00:00Z"
+
+  /api/v1/libraries/{id}:
+    get:
+      operationId: getLibrary
+      summary: Get details of a library namespace
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Library details
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [library]
+                properties:
+                  library: { $ref: '#/components/schemas/Library' }
+              example:
+                library:
+                  id: "00000000-0000-0000-0000-000000000001"
+                  name: "Default Library"
+                  description: "Main library namespace"
+                  allowReaderUploads: false
+                  createdAt: "2026-09-01T12:00:00Z"
+                  updatedAt: "2026-09-01T12:00:00Z"
+    patch:
+      operationId: updateLibrary
+      summary: Update library metadata or settings (Admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                allowReaderUploads: { type: boolean }
+      responses:
+        '200':
+          description: Library updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [library]
+                properties:
+                  library: { $ref: '#/components/schemas/Library' }
+              example:
+                library:
+                  id: "00000000-0000-0000-0000-000000000001"
+                  name: "Default Library Updated"
+                  description: "Main library namespace"
+                  allowReaderUploads: true
+                  createdAt: "2026-09-01T12:00:00Z"
+                  updatedAt: "2026-09-01T12:00:00Z"
+    delete:
+      operationId: deleteLibrary
+      summary: Delete a custom library namespace (Admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Library deleted successfully
+
+  /api/v1/libraries/{id}/members:
+    get:
+      operationId: listLibraryMembers
+      summary: List members belonging to a library
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Library members
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: '#/components/schemas/LibraryMember' }
+              example:
+                members:
+                  - id: "00000000-0000-0000-0000-000000000001"
+                    userId: "00000000-0000-0000-0000-000000000001"
+                    username: "librarian"
+                    email: "admin@alexandryn.org"
+                    role: "admin"
+                    createdAt: "2026-09-01T12:00:00Z"
+
+  /api/v1/libraries/{id}/invitations:
+    post:
+      operationId: createLibraryInvitation
+      summary: Create an invitation token for a library (Admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [admin, reader] }
+      responses:
+        '201':
+          description: Invitation created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invitationToken, invitationUrl, expiresAt]
+                properties:
+                  invitationToken: { type: string }
+                  invitationUrl: { type: string }
+                  expiresAt: { type: string, format: date-time }
+              example:
+                invitationToken: "mock-invite-token"
+                invitationUrl: "/invite/mock-invite-token"
+                expiresAt: "2026-09-08T12:00:00Z"
+
+  /api/v1/invitations/{token}/accept:
+    post:
+      operationId: acceptLibraryInvitation
+      summary: Accept library invitation
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Invitation accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [libraryId, role]
+                properties:
+                  libraryId: { type: string }
+                  role: { type: string }
+              example:
+                libraryId: "00000000-0000-0000-0000-000000000001"
+                role: "reader"
+
+  # ── Network and Device Pairing endpoints ─────────────────────────────
+
+  /api/v1/network/pair/initiate:
+    post:
+      operationId: initiatePairing
+      summary: Create a new 5-minute device pairing session
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                secret:
+                  type: string
+      responses:
+        '201':
+          description: Pairing session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InitiatePairingResponse' }
+              example:
+                pairingId: "00000000-0000-0000-0000-000000000001"
+                code: "ABCD-EFGH"
+                payload: "http://192.168.1.50:8080/connect?c=ABCD-EFGH"
+                address: "192.168.1.50:8080"
+                expiresAt: "2026-09-05T12:05:00Z"
+        '400':
+          description: Malformed request payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: invalid_input
+                message: malformed request body or body too large
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '403':
+          description: Insufficient permissions or wrong pairing secret
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: forbidden
+                message: insufficient permissions for this resource
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '415':
+          description: Unsupported media type
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: unsupported_media_type
+                message: Content-Type must be application/json
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: rate_limited
+                message: too many requests, slow down and try again shortly
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/network/pair/verify:
+    post:
+      operationId: verifyPairing
+      summary: Verify candidate device pairing code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+                label: { type: string }
+      responses:
+        '200':
+          description: Pairing code verified and enrolment grant issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VerifyPairingResponse' }
+              example:
+                enrolmentGrant: "mock.enrolment.jwt"
+                address: "192.168.1.50:8080"
+                hostName: "alexandryn.local"
+        '400':
+          description: Malformed code format
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: invalid_input
+                message: "malformed pairing code: must be 8 Crockford base32 characters"
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '403':
+          description: Origin not allowed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: forbidden
+                message: request origin is not allowed
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '404':
+          description: Pairing code not recognized or expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: not_found
+                message: pairing code not recognised
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '415':
+          description: Unsupported media type
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: unsupported_media_type
+                message: Content-Type must be application/json
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '429':
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: rate_limited
+                message: too many requests, slow down and try again shortly
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/network/pair/{id}/qr:
+    get:
+      operationId: getPairingQR
+      summary: Get pairing QR payload and code for active session
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Pairing QR data retrieved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PairingQRResponse' }
+              example:
+                address: "192.168.1.50:8080"
+                expiresAt: "2026-09-05T12:05:00Z"
+                state: "pending"
+                code: "ABCD-EFGH"
+                payload: "http://192.168.1.50:8080/connect?c=ABCD-EFGH"
+        '403':
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: forbidden
+                message: insufficient permissions for this resource
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '404':
+          description: Pairing session not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: not_found
+                message: pairing session not found
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/network/status:
+    get:
+      operationId: getNetworkStatus
+      summary: Get network reachability and addresses scoped by role
+      responses:
+        '200':
+          description: Network reachability and configuration status
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: '#/components/schemas/NetworkStatusAdmin' }
+                  - { $ref: '#/components/schemas/NetworkStatusReader' }
+              example:
+                reachability: "lan"
+                tlsMode: "none"
+                authRequired: true
+                address: "http://192.168.1.50:8080"
+                addresses:
+                  - scope: "lan"
+                    url: "http://192.168.1.50:8080"
+                hostName: "alexandryn.local"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: unauthorized
+                message: missing or invalid authorization token
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/network/settings:
+    get:
+      operationId: getNetworkSettings
+      summary: Read the runtime-safe network settings (admin only)
+      responses:
+        '200':
+          description: The saved settings, or the defaults when none is saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSettingsResponse' }
+              example:
+                hostName: "alexandryn.local"
+                rememberDeviceDays: 30
+                updatedAt: "2026-09-05T12:00:00Z"
+        '403':
+          description: Not an admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: forbidden
+                message: insufficient permissions for this resource
+                correlationId: "00000000-0000-0000-0000-000000000000"
+    patch:
+      operationId: updateNetworkSettings
+      summary: Update network settings (admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hostName: { type: string }
+                rememberDeviceDays: { type: integer, minimum: 1, maximum: 90 }
+      responses:
+        '200':
+          description: Network settings updated successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NetworkSettingsResponse' }
+              example:
+                hostName: "alexandryn.local"
+                rememberDeviceDays: 30
+                updatedAt: "2026-09-05T12:00:00Z"
+        '400':
+          description: Invalid input or forbidden configuration key
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: invalid_input
+                message: "unrecognised settings key \"unknownKey\""
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '403':
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: forbidden
+                message: insufficient permissions for this resource
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '415':
+          description: Unsupported media type
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: unsupported_media_type
+                message: Content-Type must be application/json
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/network/pair/{id}:
+    delete:
+      operationId: deletePairing
+      summary: Revoke pairing session or associated device
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Pairing session expired or device revoked
+        '403':
+          description: Insufficient permissions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: forbidden
+                message: insufficient permissions for this resource
+                correlationId: "00000000-0000-0000-0000-000000000000"
+        '404':
+          description: Pairing session not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                code: not_found
+                message: pairing session not found
+                correlationId: "00000000-0000-0000-0000-000000000000"
+
+  /api/v1/devices:
+    get:
+      operationId: listDevices
+      summary: List paired devices for authenticated user
+      responses:
+        '200':
+          description: List of paired devices
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListDevicesResponse' }
+              example:
+                devices:
+                  - id: "dev_1"
+                    label: "MacBook Pro"
+                    deviceClass: desktop
+                    enrolledVia: password_login
+                    createdAt: "2026-09-01T10:00:00Z"
+                    lastSeenAt: "2026-09-01T12:00:00Z"
+                    lastSyncedAt: "2026-09-01T11:50:00Z"
+                    revokedAt: null
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: unauthorized, message: "authentication required", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/devices/{id}:
+    delete:
+      operationId: revokeDevice
+      summary: Revoke paired device
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Paired device revoked
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: Unauthorized, message: "unauthorized", correlationId: 00000000-0000-0000-0000-000000000000 }
+        '404':
+          description: Paired device not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: NotFound, message: "paired device not found", correlationId: 00000000-0000-0000-0000-000000000000 }
+        '409':
+          description: Paired device is already revoked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: Conflict, message: "paired device is already revoked", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/sync/reading:
+    get:
+      operationId: syncReading
+      summary: Fetch reading synchronization delta
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: integer, minimum: 0 }
+        - name: X-Device-Id
+          in: header
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: Incremental reading sync payload
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadingSyncResponse' }
+              example:
+                cursor: 128
+                progress:
+                  - workId: "wrk_1"
+                    percentage: 0.42
+                    epoch: 0
+                    deviceId: "dev_2"
+                    observedAt: "2026-09-01T12:00:00Z"
+                    syncSequence: 127
+                bookmarks:
+                  - id: "bmk_1"
+                    editionId: "edn_1"
+                    position: "epubcfi(/6/4!/10)"
+                    label: "the turn"
+                    createdAt: "2026-09-01T11:00:00Z"
+                    syncSequence: 120
+                highlights:
+                  - id: "hl_1"
+                    editionId: "edn_1"
+                    startPosition: "epubcfi(/6/4!/10)"
+                    endPosition: "epubcfi(/6/4!/24)"
+                    note: "worth revisiting"
+                    category: idea
+                    createdAt: "2026-09-01T11:30:00Z"
+                    syncSequence: 124
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: InvalidInput, message: "invalid since parameter", correlationId: 00000000-0000-0000-0000-000000000000 }
+        '401':
+          description: Unauthorized or device revoked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: Unauthorized, message: "unauthorized device", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+  /api/v1/sync/progress:
+    post:
+      operationId: syncProgress
+      summary: Post reading progress report from device
+      parameters:
+        - name: X-Device-Id
+          in: header
+          required: false
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SyncProgressRequest' }
+      responses:
+        '200':
+          description: Progress reconciliation result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncProgressResponse' }
+              example:
+                outcome: advanced
+                progress: { percentage: 0.51, epoch: 0, precisePosition: null, observedAt: "2026-09-01T12:05:00Z" }
+                cursor: 129
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: InvalidInput, message: "workId is required", correlationId: 00000000-0000-0000-0000-000000000000 }
+        '401':
+          description: Unauthorized or device revoked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: Unauthorized, message: "deviceId does not match authenticated device", correlationId: 00000000-0000-0000-0000-000000000000 }
+        '404':
+          description: Work not found in library
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { code: NotFound, message: "work not found in your library", correlationId: 00000000-0000-0000-0000-000000000000 }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    BootstrapCapabilities:
+      type: object
+      required: [sources, import, settings, system, network]
+      properties:
+        sources: { type: boolean }
+        import: { type: boolean }
+        settings: { type: boolean }
+        system: { type: boolean }
+        network: { type: boolean }
+    BootstrapResponse:
+      type: object
+      required: [capabilities]
+      properties:
+        capabilities:
+          $ref: '#/components/schemas/BootstrapCapabilities'
+    PrecisePosition:
+      type: object
+      required: [editionId, cfi]
+      properties:
+        editionId: { type: string }
+        cfi: { type: string }
+    ReadingProgress:
+      type: object
+      required: [percentage, epoch, observedAt]
+      properties:
+        percentage: { type: number, minimum: 0, maximum: 1 }
+        epoch: { type: integer, minimum: 0 }
+        precisePosition:
+          oneOf:
+            - $ref: '#/components/schemas/PrecisePosition'
+            - type: 'null'
+        observedAt: { type: string, format: date-time }
+    ReadingProgressResponse:
+      type: object
+      required: [progress]
+      properties:
+        progress:
+          oneOf:
+            - $ref: '#/components/schemas/ReadingProgress'
+            - type: 'null'
+    ProgressReportRequest:
+      type: object
+      required: [percentage, observedEpoch]
+      properties:
+        percentage: { type: number, minimum: 0, maximum: 1 }
+        observedEpoch: { type: integer, minimum: 0 }
+        precisePosition:
+          oneOf:
+            - $ref: '#/components/schemas/PrecisePosition'
+            - type: 'null'
+        override: { type: boolean }
+    ProgressReportResult:
+      type: object
+      required: [progress, outcome]
+      properties:
+        progress: { $ref: '#/components/schemas/ReadingProgress' }
+        outcome: { type: string, enum: [advanced, unchanged, rejected, overridden] }
+    Bookmark:
+      type: object
+      required: [id, editionId, cfi, label, createdAt]
+      properties:
+        id: { type: string }
+        editionId: { type: string }
+        cfi: { type: string }
+        label: { type: string }
+        createdAt: { type: string, format: date-time }
+    BookmarkResponse:
+      type: object
+      required: [bookmark]
+      properties:
+        bookmark: { $ref: '#/components/schemas/Bookmark' }
+    BookmarkListResponse:
+      type: object
+      required: [bookmarks]
+      properties:
+        bookmarks:
+          type: array
+          items: { $ref: '#/components/schemas/Bookmark' }
+    BookmarkCreateRequest:
+      type: object
+      required: [cfi]
+      properties:
+        cfi: { type: string }
+        label:
+          oneOf: [{ type: string }, { type: 'null' }]
+    Highlight:
+      type: object
+      required: [id, editionId, startCfi, endCfi, note, category, createdAt]
+      properties:
+        id: { type: string }
+        editionId: { type: string }
+        startCfi: { type: string }
+        endCfi: { type: string }
+        note: { type: string }
+        category: { type: string }
+        createdAt: { type: string, format: date-time }
+    HighlightResponse:
+      type: object
+      required: [highlight]
+      properties:
+        highlight: { $ref: '#/components/schemas/Highlight' }
+    HighlightListResponse:
+      type: object
+      required: [highlights]
+      properties:
+        highlights:
+          type: array
+          items: { $ref: '#/components/schemas/Highlight' }
+    HighlightCreateRequest:
+      type: object
+      required: [startCfi, endCfi]
+      properties:
+        startCfi: { type: string }
+        endCfi: { type: string }
+        note:
+          oneOf: [{ type: string }, { type: 'null' }]
+        category:
+          oneOf: [{ type: string }, { type: 'null' }]
+    HighlightPatchRequest:
+      type: object
+      properties:
+        note:
+          oneOf: [{ type: string }, { type: 'null' }]
+        category:
+          oneOf: [{ type: string }, { type: 'null' }]
+    ReadingPreferences:
+      type: object
+      required: [font, fontSize, lineSpacing, theme, layoutMode, columnWidth]
+      properties:
+        font: { type: string }
+        fontSize: { type: number }
+        lineSpacing: { type: number }
+        theme: { type: string, enum: [light, sepia, dark] }
+        layoutMode: { type: string, enum: [paginated, scroll] }
+        columnWidth: { type: string, enum: [narrow, default, wide] }
+    ReadingPreferencesResponse:
+      type: object
+      required: [preferences]
+      properties:
+        preferences: { $ref: '#/components/schemas/ReadingPreferences' }
+    ReadingExportDocument:
+      type: object
+      required: [schemaVersion, exportedAt, works, editions]
+      properties:
+        schemaVersion: { type: integer }
+        exportedAt: { type: string, format: date-time }
+        works:
+          type: array
+          items:
+            type: object
+            required: [workId, progress]
+            properties:
+              workId: { type: string }
+              progress:
+                oneOf:
+                  - type: object
+                  - type: 'null'
+        editions:
+          type: array
+          items:
+            type: object
+            required: [editionId, bookmarks, highlights]
+            properties:
+              editionId: { type: string }
+              bookmarks: { type: array, items: { $ref: '#/components/schemas/Bookmark' } }
+              highlights: { type: array, items: { $ref: '#/components/schemas/Highlight' } }
+    Empty:
+      type: object
+      additionalProperties: false
+      description: An empty JSON object — the health endpoints' success body.
+
+    Error:
+      type: object
+      additionalProperties: false
+      required: [code, message, correlationId]
+      description: >-
+        The one error shape every endpoint uses. `correlationId` matches
+        the id in the server's structured logs for the same request.
+      properties:
+        code:
+          type: string
+          description: Machine-readable category (domain.Category).
+          example: not_found
+        message:
+          type: string
+          description: >-
+            Human-readable, specific, no apology, says what to do next
+            (constitution §11).
+          example: no such endpoint
+        correlationId:
+          type: string
+          description: Ties this response to one server log line.
+          example: 00000000-0000-0000-0000-000000000000
+
+    # ── Library domain schemas ───────────────────────────────────────
+
+    WorkSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, subtitle, authors, isOwned, collections]
+      description: >-
+        One work in the /api/v1/library paginated list.
+      properties:
+        id:
+          type: string
+          description: WorkID (internal).
+        title:
+          type: string
+        subtitle:
+          type: string
+          description: Empty string when absent — never null.
+        authors:
+          type: array
+          items:
+            type: string
+          description: Author display names.
+        isOwned:
+          type: boolean
+          description: >-
+            True when at least one Edition of this Work has a LibraryEntry
+            (computed, not stored).
+        collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/CollectionRef'
+          description: Collections this Work is a member of.
+        addedAt:
+          type: string
+          format: date-time
+          description: >-
+            Sort key for the added_at sort mode. Present when the work is
+            owned (LibraryEntry.added_at) or wanted (most recent
+            collection membership added_at). Absent only when a work is
+            somehow reachable with neither (not expected in practice).
+          nullable: true
+
+    LibraryPage:
+      type: object
+      additionalProperties: false
+      required: [works, nextCursor]
+      description: >-
+        Response body for GET /api/v1/library.
+      properties:
+        works:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkSummary'
+        nextCursor:
+          type: string
+          nullable: true
+          description: >-
+            Opaque cursor for the next page. Null when this is the last
+            page. Clients MUST treat this as an opaque token — its
+            internal encoding is not part of the API contract.
+
+    OwnedEdition:
+      type: object
+      additionalProperties: false
+      required: [id, language, publisher, formats]
+      description: >-
+        One owned Edition in a WorkDetail response. formats
+        carries the distinct Format values across every SourceOffering
+        referencing this Edition.
+      properties:
+        id:
+          type: string
+          description: EditionID (internal).
+        language:
+          type: string
+          description: BCP-47 language tag.
+        isbn:
+          type: string
+          nullable: true
+        publisher:
+          type: string
+          description: Empty string when absent.
+        publicationYear:
+          type: integer
+          nullable: true
+        addedAt:
+          type: string
+          format: date-time
+          description: LibraryEntry.added_at for this Edition.
+        formats:
+          type: array
+          items:
+            type: string
+          description: >-
+            Distinct Format values across every SourceOffering referencing
+            this Edition. Empty array when no SourceOfferings exist. Always
+            present (never absent).
+
+    CollectionRef:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      description: >-
+        Minimal collection reference embedded in WorkSummary and
+        WorkDetail.
+      properties:
+        id:
+          type: string
+          description: CollectionID (internal).
+        name:
+          type: string
+        addedAt:
+          type: string
+          format: date-time
+          description: >-
+            Per-membership added-at timestamp — when this Work was added
+            to this Collection.
+
+    WorkDetail:
+      type: object
+      additionalProperties: false
+      required: [id, title, subtitle, authors, ownedEditions, collections]
+      description: >-
+        Response body for GET /api/v1/works/{id}.
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        subtitle:
+          type: string
+          description: Empty string when absent.
+        authors:
+          type: array
+          items:
+            type: string
+          description: Author display names.
+        subjects:
+          type: array
+          items:
+            type: string
+        originalLanguage:
+          type: string
+          nullable: true
+          description: BCP-47 language tag.
+        ownedEditions:
+          type: array
+          items:
+            $ref: '#/components/schemas/OwnedEdition'
+          description: >-
+            Editions of this Work for which a LibraryEntry exists.
+        collections:
+          type: array
+          items:
+            $ref: '#/components/schemas/CollectionRef'
+          description: >-
+            Collections this Work is a member of, each with the
+            per-membership added-at timestamp.
+
+    CollectionSummary:
+      type: object
+      additionalProperties: false
+      required: [id, name, workCount]
+      description: >-
+        One collection in the GET /api/v1/collections list.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        workCount:
+          type: integer
+          description: Number of Works currently in this Collection.
+
+    CollectionDetail:
+      type: object
+      additionalProperties: false
+      required: [id, name, works]
+      description: >-
+        Response body for GET /api/v1/collections/{id}.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        works:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkSummary'
+          description: >-
+            Works in this Collection, each carrying the per-membership
+            added-at timestamp.
+
+    CollectionCreate:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: >-
+        Request body for POST /api/v1/collections.
+      properties:
+        name:
+          type: string
+          maxLength: 100
+          description: Collection name.
+
+    CollectionRename:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: >-
+        Request body for PATCH /api/v1/collections/{id}.
+      properties:
+        name:
+          type: string
+          maxLength: 100
+
+    CollectionMembershipAdd:
+      type: object
+      additionalProperties: false
+      required: [workId]
+      description: >-
+        Request body for POST /api/v1/collections/{id}/works.
+      properties:
+        workId:
+          type: string
+
+    # ── Discovery domain schemas ───────────────────────────────────────
+
+    NormalisedAuthor:
+      type: object
+      additionalProperties: false
+      required: [name]
+      description: >-
+        A normalised author reference.
+      properties:
+        openLibraryAuthorKey:
+          type: string
+          nullable: true
+          description: Open Library author key (e.g. OL21594A) or null if unkeyed.
+        name:
+          type: string
+          description: Author display name.
+
+    NormalisedSearchResult:
+      type: object
+      additionalProperties: false
+      required: [openLibraryWorkKey, title, authors, editionCount]
+      description: >-
+        A single search result item in /api/v1/discover.
+      properties:
+        openLibraryWorkKey:
+          type: string
+          description: Open Library work key (e.g. OL82563W).
+        title:
+          type: string
+          description: Work title.
+        authors:
+          type: array
+          items:
+            $ref: '#/components/schemas/NormalisedAuthor'
+          description: List of authors credited on this work.
+        firstPublishYear:
+          type: integer
+          nullable: true
+          description: Year of first publication, if known.
+        coverUrl:
+          type: string
+          nullable: true
+          description: Local cover proxy URL (/api/v1/discover/covers/{id}) or null.
+        editionCount:
+          type: integer
+          description: Total number of known editions.
+
+    NormalisedSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [items, total, limit, offset]
+      description: >-
+        Paginated response body for GET /api/v1/discover.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NormalisedSearchResult'
+        total:
+          type: integer
+          description: Total number of upstream matching works reported by Open Library.
+        limit:
+          type: integer
+          description: Page size requested.
+        offset:
+          type: integer
+          description: Offset of the current page.
+
+    NormalisedWork:
+      type: object
+      additionalProperties: false
+      required: [title, subtitle, description, subjects, authors]
+      description: >-
+        Normalised Open Library work details.
+      properties:
+        title:
+          type: string
+        subtitle:
+          type: string
+          description: Subtitle string or empty string if absent.
+        description:
+          type: string
+          description: Work description or empty string if absent.
+        subjects:
+          type: array
+          items:
+            type: string
+          description: Subject tags.
+        authors:
+          type: array
+          items:
+            $ref: '#/components/schemas/NormalisedAuthor'
+          description: Resolved authors (capped at 20 distinct authors).
+        coverUrl:
+          type: string
+          nullable: true
+          description: Local cover proxy URL (/api/v1/discover/covers/{id}) or null.
+
+    NormalisedEdition:
+      type: object
+      additionalProperties: false
+      required: [title, publisher, publishDate, language, openLibraryEditionKey]
+      description: >-
+        One edition of an Open Library work.
+      properties:
+        title:
+          type: string
+        publisher:
+          type: string
+          description: Publisher name or empty string if absent.
+        publishDate:
+          type: string
+          description: Publication date string or empty string if absent.
+        language:
+          type: string
+          description: BCP-47 language tag or empty string if absent.
+        openLibraryEditionKey:
+          type: string
+          description: Open Library edition key (e.g. OL7353617M).
+        coverUrl:
+          type: string
+          nullable: true
+          description: Local cover proxy URL (/api/v1/discover/covers/{id}) or null.
+
+    DiscoverWorkDetail:
+      type: object
+      additionalProperties: false
+      required: [work, editions]
+      description: >-
+        Response body for GET /api/v1/discover/works/{openLibraryId}.
+      properties:
+        work:
+          $ref: '#/components/schemas/NormalisedWork'
+        editions:
+          type: array
+          items:
+            $ref: '#/components/schemas/NormalisedEdition'
+          description: First 50 editions of this work.
+
+    # ── Source domain schemas ─────────────────────────────────────────
+
+    SourceKind:
+      type: string
+      enum: [local-folder, opds]
+      description: >-
+        The provider kind — a closed vocabulary.
+
+    SourceCapabilities:
+      type: object
+      additionalProperties: false
+      required: [canList, canSearch, canDownload]
+      description: >-
+        The fixed capability set, re-detected on every health check.
+      properties:
+        canList:
+          type: boolean
+        canSearch:
+          type: boolean
+        canDownload:
+          type: boolean
+
+    SourceHealth:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt, detail]
+      description: >-
+        The result of the last reachability probe.
+      properties:
+        status:
+          type: string
+          enum: [unknown, reachable, unreachable]
+          description: >-
+            `unknown` before the first check has run; `reachable` or
+            `unreachable` after.
+        checkedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the probe ran. Null before the first check.
+        detail:
+          type: string
+          nullable: true
+          enum:
+            - timeout
+            - connection-refused
+            - http-4xx
+            - http-5xx
+            - http-3xx-unsupported
+            - unparseable-response
+            - path-not-found
+            - path-not-readable
+            - auth-rejected
+          description: >-
+            A closed-vocabulary failure category when `unreachable` —
+            never a raw error message or response body, which could leak
+            a credential or configuration detail. Null when reachable or
+            not yet checked.
+
+    SourceConfig:
+      type: object
+      additionalProperties: false
+      description: >-
+        Kind-specific connection config: `basePath` for `local-folder`,
+        `baseUrl` for `opds`. Exactly one is present per source. Neither
+        is secret — both are echoed back.
+      properties:
+        basePath:
+          type: string
+          description: Absolute filesystem path (local-folder sources).
+        baseUrl:
+          type: string
+          description: The catalog's http/https base URL (opds sources).
+
+    SourceCredentialInput:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      description: >-
+        HTTP Basic Auth credential — write-only, opds sources only. Never
+        returned by any response.
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 255
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+
+    Source:
+      type: object
+      additionalProperties: false
+      required: [id, label, kind, config, hasCredential, health, capabilities]
+      description: >-
+        A configured source. A stored credential appears only as
+        `hasCredential: true` — the response
+        shape structurally cannot carry the username or password.
+      properties:
+        id:
+          type: string
+          description: SourceID (internal).
+        label:
+          type: string
+        kind:
+          $ref: '#/components/schemas/SourceKind'
+        config:
+          $ref: '#/components/schemas/SourceConfig'
+        hasCredential:
+          type: boolean
+        health:
+          $ref: '#/components/schemas/SourceHealth'
+        capabilities:
+          $ref: '#/components/schemas/SourceCapabilities'
+
+    SourceListResponse:
+      type: object
+      additionalProperties: false
+      required: [sources]
+      description: Response body for GET /api/v1/sources.
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/Source'
+
+    SourceCreate:
+      type: object
+      additionalProperties: false
+      required: [label, kind, config]
+      description: >-
+        Request body for POST /api/v1/sources.
+      properties:
+        label:
+          type: string
+          maxLength: 100
+          description: Source label.
+        kind:
+          $ref: '#/components/schemas/SourceKind'
+        config:
+          $ref: '#/components/schemas/SourceConfig'
+        credential:
+          $ref: '#/components/schemas/SourceCredentialInput'
+
+    SourceUpdate:
+      type: object
+      additionalProperties: false
+      description: >-
+        Request body for PATCH /api/v1/sources/{id}. Every field is
+        optional; a present `credential` replaces the stored value entirely.
+      properties:
+        label:
+          type: string
+          maxLength: 100
+        config:
+          $ref: '#/components/schemas/SourceConfig'
+        credential:
+          $ref: '#/components/schemas/SourceCredentialInput'
+
+    FileReference:
+      type: object
+      additionalProperties: false
+      required: [referenceId, format, sizeBytes]
+      description: >-
+        An opaque, source-scoped file identifier.
+        `referenceId` is never a path or URL a client should interpret.
+      properties:
+        referenceId:
+          type: string
+        format:
+          type: string
+          description: Declared format (e.g. EPUB, PDF).
+        sizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+          description: Size in bytes when the source reports it, otherwise null.
+
+    SourceCandidate:
+      type: object
+      additionalProperties: false
+      required: [title, author, fileReference, coverUrl]
+      description: >-
+        One browsed or searched item — an unmatched candidate, never a
+        domain SourceOffering.
+        Every string here has already passed the adapter's normalisation
+        and validation.
+      properties:
+        title:
+          type: string
+        author:
+          type: string
+          nullable: true
+        fileReference:
+          $ref: '#/components/schemas/FileReference'
+        coverUrl:
+          type: string
+          nullable: true
+          description: >-
+            A cover image URL for opds candidates whose entry advertises
+            one; always null for local-folder.
+
+    SourceCandidatePage:
+      type: object
+      additionalProperties: false
+      required: [items, nextCursor]
+      description: >-
+        A page of candidates for GET /api/v1/sources/{id}/browse and
+        /search.
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceCandidate'
+        nextCursor:
+          type: string
+          nullable: true
+          description: >-
+            Opaque token for the next page, or null on the last page.
+            Clients MUST treat it as opaque — the encoding is not part of
+            the contract.
+
+    ImportDiscoverRequest:
+      type: object
+      additionalProperties: false
+      required: [sourceId]
+      properties:
+        sourceId:
+          type: string
+
+    ImportDiscoverResponse:
+      type: object
+      additionalProperties: false
+      required: [discoveredCount, skippedCount, jobIds]
+      properties:
+        discoveredCount:
+          type: integer
+        skippedCount:
+          type: integer
+        jobIds:
+          type: array
+          items:
+            type: string
+
+    ImportCandidateFileRef:
+      type: object
+      additionalProperties: false
+      required: [id, format]
+      properties:
+        id:
+          type: string
+        format:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+          nullable: true
+
+    ImportCandidate:
+      type: object
+      additionalProperties: false
+      required: [id, sourceId, fileReference, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        sourceId:
+          type: string
+        fileReference:
+          $ref: '#/components/schemas/ImportCandidateFileRef'
+        status:
+          type: string
+          enum: [queued, pending, auto_imported, confirmed, rejected, failed]
+        extractedMetadata:
+          type: object
+          nullable: true
+        matchCandidates:
+          type: array
+          items:
+            type: object
+          nullable: true
+        jobId:
+          type: string
+          nullable: true
+        lastError:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ImportCandidateListResponse:
+      type: object
+      additionalProperties: false
+      required: [candidates]
+      properties:
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportCandidate'
+
+    ImportConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [attach_existing, use_open_library_match, create_new]
+        editionId:
+          type: string
+        openLibraryWorkKey:
+          type: string
+        metadata:
+          type: object
+          properties:
+            title:
+              type: string
+            authors:
+              type: array
+              items:
+                type: string
+            isbn:
+              type: string
+            language:
+              type: string
+            publisher:
+              type: string
+            description:
+              type: string
+
+    UserSummary:
+      type: object
+      additionalProperties: false
+      required: [id, username, email, role]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, reader] }
+
+    AuthResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        user: { $ref: '#/components/schemas/UserSummary' }
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        mfaRequired: { type: boolean }
+        mfaTicket: { type: string }
+
+    Library:
+      type: object
+      additionalProperties: false
+      required: [id, name, description, allowReaderUploads, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        allowReaderUploads: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    LibraryMember:
+      type: object
+      additionalProperties: false
+      required: [id, userId, role, createdAt]
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        username: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, reader] }
+        createdAt: { type: string, format: date-time }
+
+    # ── Network and Device Pairing schemas ───────────────────────────
+
+    InitiatePairingResponse:
+      type: object
+      additionalProperties: false
+      required: [pairingId, code, payload, address, expiresAt]
+      properties:
+        pairingId: { type: string }
+        code: { type: string }
+        payload: { type: string }
+        address: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    VerifyPairingResponse:
+      type: object
+      additionalProperties: false
+      required: [enrolmentGrant, address, hostName]
+      properties:
+        enrolmentGrant: { type: string }
+        address: { type: string }
+        hostName: { type: string }
+
+    PairingQRResponse:
+      type: object
+      additionalProperties: false
+      required: [address, expiresAt, state, code, payload]
+      properties:
+        address: { type: string }
+        expiresAt: { type: string, format: date-time }
+        state: { type: string, enum: [pending, verified, consumed, expired] }
+        code: { type: string }
+        payload: { type: string }
+
+    NetworkAddress:
+      type: object
+      additionalProperties: false
+      required: [scope, url]
+      properties:
+        scope: { type: string }
+        url: { type: string }
+
+    NetworkStatusReader:
+      type: object
+      additionalProperties: false
+      required: [reachability, tlsMode, authRequired, address]
+      properties:
+        reachability: { type: string }
+        tlsMode: { type: string, enum: [none, static, acme] }
+        authRequired: { type: boolean }
+        address: { type: string }
+
+    NetworkStatusAdmin:
+      type: object
+      additionalProperties: false
+      required: [reachability, tlsMode, authRequired, address, addresses, hostName]
+      properties:
+        reachability: { type: string }
+        tlsMode: { type: string, enum: [none, static, acme] }
+        authRequired: { type: boolean }
+        address: { type: string }
+        addresses:
+          type: array
+          items: { $ref: '#/components/schemas/NetworkAddress' }
+        hostName: { type: string }
+        acmeDomain: { type: string }
+
+    NetworkSettingsResponse:
+      type: object
+      additionalProperties: false
+      required: [hostName, rememberDeviceDays, updatedAt]
+      properties:
+        hostName: { type: string }
+        rememberDeviceDays: { type: integer, minimum: 1, maximum: 90 }
+        updatedAt: { type: string, format: date-time }
+
+    DeviceResponse:
+      type: object
+      additionalProperties: false
+      required: [id, label, deviceClass, enrolledVia, createdAt, lastSeenAt]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        deviceClass: { type: string }
+        enrolledVia: { type: string }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        lastSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revokedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ListDevicesResponse:
+      type: object
+      additionalProperties: false
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          items: { $ref: '#/components/schemas/DeviceResponse' }
+
+    SyncProgressItem:
+      type: object
+      additionalProperties: false
+      required: [workId, percentage, epoch, deviceId, observedAt, syncSequence]
+      properties:
+        workId: { type: string }
+        percentage: { type: number, minimum: 0, maximum: 1 }
+        epoch: { type: integer, minimum: 0 }
+        precisePosition:
+          $ref: '#/components/schemas/PrecisePosition'
+        deviceId: { type: string }
+        observedAt: { type: string, format: date-time }
+        syncSequence: { type: integer }
+
+    SyncBookmarkItem:
+      type: object
+      additionalProperties: false
+      required: [id, editionId, position, label, createdAt, syncSequence]
+      properties:
+        id: { type: string }
+        editionId: { type: string }
+        position: { type: string }
+        label: { type: string }
+        createdAt: { type: string, format: date-time }
+        syncSequence: { type: integer }
+
+    SyncHighlightItem:
+      type: object
+      additionalProperties: false
+      required: [id, editionId, startPosition, endPosition, note, category, createdAt, syncSequence]
+      properties:
+        id: { type: string }
+        editionId: { type: string }
+        startPosition: { type: string }
+        endPosition: { type: string }
+        note: { type: string }
+        category: { type: string }
+        createdAt: { type: string, format: date-time }
+        syncSequence: { type: integer }
+
+    ReadingSyncResponse:
+      type: object
+      additionalProperties: false
+      required: [cursor, progress, bookmarks, highlights]
+      properties:
+        cursor: { type: integer }
+        progress:
+          type: array
+          items: { $ref: '#/components/schemas/SyncProgressItem' }
+        bookmarks:
+          type: array
+          items: { $ref: '#/components/schemas/SyncBookmarkItem' }
+        highlights:
+          type: array
+          items: { $ref: '#/components/schemas/SyncHighlightItem' }
+
+    SyncPrecisePosition:
+      type: object
+      additionalProperties: false
+      required: [editionId]
+      properties:
+        editionId: { type: string }
+        value: { type: string }
+        cfi: { type: string }
+
+    SyncProgressRequest:
+      type: object
+      additionalProperties: false
+      required: [workId, percentage, observedEpoch, deviceId]
+      properties:
+        workId: { type: string }
+        percentage: { type: number, minimum: 0, maximum: 1 }
+        observedEpoch: { type: integer, minimum: 0 }
+        override:
+          type: boolean
+          description: >-
+            Deliberate correction (a re-read or a jump back to an earlier
+            chapter). Bumps the canonical epoch so a lower percentage is
+            accepted instead of rejected as a stale automatic report.
+        precisePosition:
+          $ref: '#/components/schemas/SyncPrecisePosition'
+        deviceId: { type: string }
+        reportedAt: { type: string, format: date-time }
+
+    SyncProgressResponse:
+      type: object
+      additionalProperties: false
+      required: [outcome, progress, cursor]
+      properties:
+        outcome: { type: string, enum: [advanced, unchanged, rejected, overridden] }
+        progress: { $ref: '#/components/schemas/ReadingProgress' }
+        cursor: { type: integer }
+
+# Applied globally so the reserved scheme is visible in the contract.
+security:
+  - bearerAuth: []
+
+
