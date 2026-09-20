@@ -1,0 +1,12 @@
+/* The website's accent, so the two sites read as one product. Starlight derives
+   the rest of its palette from these. Contrast is checked by the axe suite. */
+:root {
+  --sl-color-accent-low: #dfe6f1;
+  --sl-color-accent: #41608f;
+  --sl-color-accent-high: #2c4368;
+}
+:root[data-theme='dark'] {
+  --sl-color-accent-low: #23324d;
+  --sl-color-accent: #6f8fc4;
+  --sl-color-accent-high: #b7c9e6;
+}
