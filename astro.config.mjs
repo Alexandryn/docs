@@ -25,7 +25,28 @@ export default defineConfig({
       ],
       customCss: ['./src/styles/custom.css'],
       sidebar: [
-        { label: 'Getting started', items: [{ autogenerate: { directory: 'getting-started' } }] },
+        {
+          label: 'Getting started',
+          items: [
+            'getting-started/what-is-alexandryn',
+            'getting-started/install-the-desktop-app',
+            'getting-started/run-with-docker',
+            'getting-started/first-run-setup',
+          ],
+        },
+        {
+          label: 'Using Alexandryn',
+          items: ['using/add-a-source', 'using/import-books', 'using/read-on-another-device'],
+        },
+        {
+          label: 'Administration',
+          items: ['admin/accounts-and-libraries', 'admin/back-up-and-restore'],
+        },
+        {
+          label: 'Security',
+          items: ['security/how-security-works', 'security/exposing-alexandryn'],
+        },
+        { label: 'Updating', items: ['updating/update-alexandryn'] },
         ...openAPISidebarGroups,
       ],
     }),

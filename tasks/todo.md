@@ -25,9 +25,9 @@
 
 ### Checkpoint A: the API reference builds from the real spec
 
-- [ ] **T3a: Getting started pages** (M): what it is, desktop install, Docker, first run
-- [ ] **T3b: Using Alexandryn pages** (M): sources, import, read on another device
-- [ ] **T3c: Administration, security, updating pages** (M)
+- [x] **T3a: Getting started pages** (M): what it is, desktop install, Docker, first run
+- [x] **T3b: Using Alexandryn pages** (M): sources, import, read on another device
+- [x] **T3c: Administration, security, updating pages** (M)
   - Acceptance for T3: pages carry title and description; steps in order; each
     claim carried over from the old guides or verified against `../Alexandryn`
     (listed in the commit body); old guide files removed; sidebar complete.
