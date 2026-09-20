@@ -16,7 +16,9 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "sync:openapi": "node scripts/sync-openapi.ts",
-    "check:openapi": "node scripts/check-openapi.ts"
+    "check:openapi": "node scripts/check-openapi.ts",
+    "check:links": "node scripts/check-links.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@astrojs/starlight": "^0.42.2",
@@ -25,7 +27,9 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^26.6.2",
     "eslint": "^10.11.0",
     "globals": "^17.12.0",

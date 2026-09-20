@@ -10,3 +10,14 @@
   --sl-color-accent: #6f8fc4;
   --sl-color-accent-high: #b7c9e6;
 }
+
+/* Long commands wrap instead of scrolling. A scrolling code block is a scroll region
+   that a keyboard user cannot reach, which the axe suite flags at 320px. */
+.expressive-code pre {
+  white-space: pre-wrap;
+  overflow-x: visible;
+}
+.expressive-code pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
