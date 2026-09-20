@@ -1,0 +1,6 @@
+dist
+.astro
+SPEC.md
+tasks
+package-lock.json
+openapi

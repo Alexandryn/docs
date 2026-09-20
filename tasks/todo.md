@@ -1,6 +1,6 @@
 # Tasks
 
-- [ ] **T1: Scaffold the Starlight site** (M)
+- [x] **T1: Scaffold the Starlight site** (M)
   - Acceptance: `npm ci && npm run build` produces `dist/`; site title, base
     `/docs`, sidebar skeleton, accent colour from the website; ESLint, Prettier,
     `astro check` pass; `.gitignore` covers `dist`, `node_modules`, `.astro`.
