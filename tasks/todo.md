@@ -8,12 +8,17 @@
   - Files: `package.json`, `astro.config.mjs`, `tsconfig.json`, `src/content.config.ts`,
     `src/content/docs/index.mdx`, `src/styles/custom.css`, lint config
 
-- [ ] **T2: OpenAPI sync, check, and API reference** (M)
+- [x] **T2: OpenAPI sync, check, and API reference** (M)
   - Acceptance: `sync:openapi` copies the file, writes `SOURCE.json`;
     `check:openapi` fails on a changed byte or wrong checksum; the built site has
     a page per tag or path group and every path in the spec appears; unit tests
     have failing fixtures.
   - Verify: `npm test && npm run build`, then count paths in `dist/`
+  - Result: all 56 paths appear in the built site (72 API pages). `SOURCE.json`
+    says `v1.0.0`, but that tag does not exist in `alexandryn` yet: the copy was
+    taken from the phase 99 branch. After the tag exists, run `sync:openapi`
+    again and confirm the checksum is unchanged; if it changed, the tag and the
+    copy differ and the copy must follow the tag.
   - Depends on: T1
   - Files: `scripts/sync-openapi.ts`, `scripts/check-openapi.ts`, tests,
     `openapi/*`, `astro.config.mjs`
