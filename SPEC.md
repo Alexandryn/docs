@@ -44,7 +44,6 @@ Dependency reasons (constitution section 9), recorded before adding:
 | `astro`, `@astrojs/starlight` | Builds the site, navigation, and search from Markdown | A docs site with search and accessible navigation is a large amount of code to write and keep accessible | The site stops building; the Markdown content moves to another generator |
 | `starlight-openapi` | Turns `openapi.yaml` into reference pages | Rendering 56 paths with schemas by hand goes stale immediately | The API reference; the guides are unaffected. Fallback: link to the raw YAML |
 | `@playwright/test`, `@axe-core/playwright` | Real-browser accessibility and search checks | jsdom has no layout or Pagefind | The e2e suite only |
-| `yaml` (only if needed for the checks) | Parse the spec in the sync check | Hand-parsing YAML is unsafe | The drift check |
 
 ## Commands
 

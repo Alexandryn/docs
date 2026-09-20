@@ -34,9 +34,9 @@
 
 ### Checkpoint B: maintainer reads the content
 
-- [ ] **T4: Checks** (M): `check-links`, Playwright axe at 320/768/1280, keyboard,
+- [x] **T4: Checks** (M): `check-links`, Playwright axe at 320/768/1280, keyboard,
       search, no third-party origin, content test
-- [ ] **T5: Pages workflow and README** (S)
+- [x] **T5: Pages workflow and README** (S)
 
 ### Checkpoint C: reviewers and sign-off
 
