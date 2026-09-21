@@ -80,6 +80,16 @@ describe('load-bearing statements are present in full', () => {
     expect(text).toMatch(/docker volume ls/)
   })
 
+  it('tells the reader how to check a download, and does not overstate what that proves', () => {
+    const text = page('getting-started/install-the-desktop-app.md')
+    expect(text).toMatch(/SHA256SUMS\.txt/)
+    for (const command of ['sha256sum', 'shasum -a 256', 'Get-FileHash']) {
+      expect(text).toContain(command)
+    }
+    expect(text).toMatch(/does not rule out tampering at the source/)
+    expect(text).not.toMatch(/does not yet document a way to verify/)
+  })
+
   it('says the desktop app listens on its own computer only', () => {
     expect(page('using/read-on-another-device.md')).toMatch(/listens on its own computer only/)
   })

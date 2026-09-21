@@ -14,9 +14,21 @@ server for you and opens the library in its own window. It listens on that compu
 ## Your system will warn you
 
 The installers are not yet code-signed, so macOS and Windows warn you the first
-time you open Alexandryn. The warning is about the missing signature. Alexandryn does
-not yet document a way to verify a download beyond where it comes from, so download
-only from the official releases page linked above.
+time you open Alexandryn. The warning is about the missing signature.
+
+## Check your download
+
+Each release lists a `SHA256SUMS.txt` file beside the installers. To check a download,
+compute the file's SHA-256 checksum and compare it with the line for that file:
+
+- Linux: `sha256sum <file>`
+- macOS: `shasum -a 256 <file>`
+- Windows (PowerShell): `Get-FileHash <file>`
+
+If the two do not match, download the file again. The checksums sit on the same release
+page as the installers, so this catches a damaged or mismatched download. It does not
+show that the release itself is genuine: a match does not rule out tampering at the
+source. Download only from the official releases page linked above.
 
 ## Reading on other devices
 
