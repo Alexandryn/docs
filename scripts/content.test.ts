@@ -86,7 +86,7 @@ describe('load-bearing statements are present in full', () => {
     for (const command of ['sha256sum', 'shasum -a 256', 'Get-FileHash']) {
       expect(text).toContain(command)
     }
-    expect(text).toMatch(/does not rule out tampering at the source/)
+    expect(text).toMatch(/does not rule out tampering at the\s+source/)
     expect(text).not.toMatch(/does not yet document a way to verify/)
   })
 
