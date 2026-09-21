@@ -15,10 +15,10 @@
     have failing fixtures.
   - Verify: `npm test && npm run build`, then count paths in `dist/`
   - Result: all 56 paths appear in the built site (72 API pages). `SOURCE.json`
-    says `v1.0.0`, but that tag does not exist in `alexandryn` yet: the copy was
-    taken from the phase 99 branch. After the tag exists, run `sync:openapi`
-    again and confirm the checksum is unchanged; if it changed, the tag and the
-    copy differ and the copy must follow the tag.
+    says `v1.0.0`. The copy was first taken from the phase 99 branch before the tag
+    existed; on 2026-09-21, after the tag was pushed, `check:openapi --against` a
+    copy of `api/openapi.yaml` read from the tag passed: the checksum is identical,
+    so the copy is exactly the tagged contract.
   - Depends on: T1
   - Files: `scripts/sync-openapi.ts`, `scripts/check-openapi.ts`, tests,
     `openapi/*`, `astro.config.mjs`
