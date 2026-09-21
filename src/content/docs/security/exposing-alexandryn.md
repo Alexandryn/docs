@@ -9,14 +9,20 @@ expose your library to your network or the internet. That is a separate, deliber
 
 ## What the server requires
 
-The address Alexandryn listens on decides what it insists on:
+The address Alexandryn listens on is set with `BIND_ADDRESS`. It decides what the server
+insists on:
 
-- **Loopback or a private address** (your home network, for example). Alexandryn is
-  never directly reachable from a public address. It can run without TLS. If TLS is
-  used, it can end at a reverse proxy in front of Alexandryn.
-- **A publicly reachable address.** Alexandryn refuses to start unless it terminates
-  TLS itself, with a valid certificate. This is enforced in code and cannot be left
-  off by accident.
+- **Loopback or a private address** (your home network, for example). The server will
+  start without TLS. It does not check what sits in front of it: a port forward, a
+  Docker port mapping, or a proxy can make a private address reachable from elsewhere,
+  and none of those add TLS for you.
+- **A public address.** The server refuses to start unless it terminates TLS itself,
+  with a valid certificate. This is enforced in code.
+
+So the server permits plain HTTP on a private address, but that is a limit on what it
+enforces, not a recommendation. On plain HTTP your password crosses the network in the
+clear. Put TLS in place before you make Alexandryn reachable beyond one machine, and do
+not forward a port to the internet without it.
 
 Authentication is required in every case. Cross-origin requests are denied by default.
 You name the exact origins you trust, and start from none.
@@ -34,10 +40,12 @@ You name the exact origins you trust, and start from none.
 
 ## Docker
 
-The example override file, `docker-compose.override.yml.example`, publishes the port on
-`127.0.0.1` only. That reaches the server from the same machine and no other. Its
-comments advise putting TLS in place before you change that address to a network
-interface, because plain HTTP on a network sends passwords unencrypted.
+In the Docker setup the server always listens on a fixed private address inside
+Compose's own network, so the public-address rule never applies there. What decides who
+can reach it is the port you publish. The example override file,
+`docker-compose.override.yml.example`, publishes it on `127.0.0.1` only, which reaches the
+server from the same machine and no other. Its comments advise putting TLS in place
+before you change that address to a network interface.
 
 Also see [How security works](/docs/security/how-security-works/) for what Alexandryn
 does and does not do.

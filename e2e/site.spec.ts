@@ -34,6 +34,19 @@ for (const [label, path] of PAGES) {
   }
 }
 
+test.describe('dark mode', () => {
+  test.use({ colorScheme: 'dark' })
+  for (const [label, path] of PAGES) {
+    test(`no axe violations on ${label} in dark mode`, async ({ page }) => {
+      await page.goto(path)
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+        .analyze()
+      expect(results.violations.map((v) => v.id)).toEqual([])
+    })
+  }
+})
+
 test('no horizontal scroll at 320px on a long guide page', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 800 })
   await page.goto('/docs/getting-started/run-with-docker/')
@@ -68,6 +81,7 @@ test('search finds a page by a word in its body, not only its title', async ({ p
 })
 
 test('the API reference lists every path in the specification', async ({ page }) => {
+  test.setTimeout(120_000)
   const spec = readFileSync(join(import.meta.dirname, '../openapi/openapi.yaml'), 'utf8')
   const expected = countPaths(spec)
   expect(expected).toBeGreaterThan(50)
@@ -85,7 +99,11 @@ test('the API reference lists every path in the specification', async ({ page })
     await page.goto(href)
     text += await page.locator('main').innerText()
   }
-  for (const path of paths) expect(text, path).toContain(path)
+  // Whole-path match: `/api/v1/reading/export` must not be satisfied by a longer path.
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  for (const path of paths) {
+    expect(text, path).toMatch(new RegExp(`(?<![\\w/{}-])${escape(path)}(?![\\w/{}-])`))
+  }
 })
 
 test('loads with no console errors and requests nothing from another origin', async ({

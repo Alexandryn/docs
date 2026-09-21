@@ -31,9 +31,10 @@ with different key material and carries a type that the access check rejects.
   yourself: port forwarding, a VPN, or a reverse proxy on a server you control.
 - **No cloud sync.** Reading progress, bookmarks, and library data sync only between
   your own paired devices, directly with your own instance. This project operates no
-  server that could store them. The one outbound call to a third party is the Open
-  Library metadata lookup. It searches for and fetches public bibliographic
-  information, never your library contents or reading activity.
+  server that could store them. By default the only outside service Alexandryn contacts
+  is Open Library, for metadata. It searches for and fetches public bibliographic
+  information, never your library contents or reading activity. If you turn on ACME for
+  TLS, Alexandryn also contacts the certificate authority to obtain your certificate.
 - **No telemetry.** Alexandryn does not report usage, errors, or anything else to this
   project. Diagnostics and activity logs stay on your instance.
 

@@ -10,8 +10,8 @@ Every account has one of two roles:
 - **Admin.** Manages sources, libraries, and other accounts, and can see operational
   information such as the activity log and diagnostics.
 - **Reader.** Browses and reads, and manages their own reading progress, bookmarks,
-  and highlights. A reader cannot change sources or library settings. If you allow it
-  for a library, a reader can also add works to that library from a source.
+  and highlights. A reader cannot change sources or library settings. If you allow reader
+  uploads for a library, a reader can also add books to it.
 
 The first account, created during [setup](/docs/getting-started/first-run-setup/), is
 an admin. There is no owner role above admin: every admin has the same access.
@@ -23,7 +23,7 @@ wants separate collections, or different permissions on the same server.
 
 To create a library beyond the default one, open the library management screen
 (admin only) and give it a name and an optional description. There you also choose
-whether readers can add works from a source, or only admins can.
+whether reader uploads are enabled, or only admins can add books.
 
 ## Invite someone
 

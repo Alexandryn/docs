@@ -31,6 +31,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # Advisory only: the build-time dependencies run on the maintainer's own spec.
+      - run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
       - run: npm run format:check
       - run: npm test
       - run: npm run check:openapi

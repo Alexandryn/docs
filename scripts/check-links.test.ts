@@ -60,6 +60,38 @@ describe('checkSite', () => {
     expect(checkSite(dist, BASE).join()).toMatch(/missing/)
   })
 
+  it('reports relative links, which Starlight pages should not contain', () => {
+    const dist = site({ 'index.html': '<a href="missing/">x</a><a href="../nope">y</a>' })
+    expect(checkSite(dist, BASE).join('\n')).toMatch(/relative/)
+  })
+
+  it('ignores a query string when resolving, and still checks the anchor', () => {
+    const dist = site({
+      'index.html': '<a href="/docs/a/?x=1">x</a><a href="/docs/a/?x=1#nope">y</a>',
+      'a/index.html': '<h2 id="ok">t</h2>',
+    })
+    const problems = checkSite(dist, BASE).join('\n')
+    expect(problems).toMatch(/#nope/)
+    expect(problems).not.toMatch(/\?x=1 does not exist/)
+  })
+
+  it('does not crash on a malformed percent escape, and does not resolve outside the site', () => {
+    const dist = site({
+      'index.html': '<a href="#%E0%A4%A">x</a><a href="/docs/../../etc/passwd">y</a>',
+    })
+    const problems = checkSite(dist, BASE).join('\n')
+    expect(problems).toMatch(/%E0%A4%A/)
+    expect(problems).toMatch(/passwd/)
+  })
+
+  it.each([
+    ['an image', '<img src="/docs/missing.png" alt="">'],
+    ['a stylesheet', '<link rel="stylesheet" href="/docs/missing.css">'],
+    ['a script', '<script src="/docs/missing.js"></script>'],
+  ])('checks %s that points at a missing file', (_label, html) => {
+    expect(checkSite(site({ 'index.html': html }), BASE).join()).toMatch(/missing/)
+  })
+
   it('reports a site with no pages, so an empty build cannot pass', () => {
     expect(checkSite(site({}), BASE).join()).toMatch(/no pages/)
   })
