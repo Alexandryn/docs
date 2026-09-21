@@ -8,6 +8,10 @@ server for you and opens the library in its own window. It listens on that compu
 
 1. Open the [Alexandryn releases page](https://github.com/Alexandryn/alexandryn/releases/latest).
 2. Download the installer for your system: macOS, Windows, or Linux.
+   - macOS: the installer is a `.dmg` for Apple silicon (M-series) Macs. There is no build for
+     Intel Macs.
+   - Windows: a 64-bit `.exe` installer.
+   - Linux: an AppImage, or a `.deb` for Debian and Ubuntu.
 3. Open the installer and follow your system's prompts.
 4. Open Alexandryn. On the first run it asks you to [create an administrator account](/docs/getting-started/first-run-setup/).
 

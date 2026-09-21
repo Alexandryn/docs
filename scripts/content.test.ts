@@ -90,6 +90,10 @@ describe('load-bearing statements are present in full', () => {
     expect(text).not.toMatch(/does not yet document a way to verify/)
   })
 
+  it('says the macOS installer is for Apple silicon only, since the release has no Intel build', () => {
+    expect(page('getting-started/install-the-desktop-app.md')).toMatch(/Apple silicon/)
+  })
+
   it('says the desktop app listens on its own computer only', () => {
     expect(page('using/read-on-another-device.md')).toMatch(/listens on its own computer only/)
   })
