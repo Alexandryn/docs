@@ -52,37 +52,90 @@ export function checkSite(dist: string, base: string): string[] {
     return undefined
   }
 
-  for (const { url, html } of pages) {
-    for (const tag of html.matchAll(new RegExp(`<a(?=[\\s>])${TAG_BODY}>`, 'gi'))) {
-      const href = attributes(tag[1]!).get('href')
-      const where = `${url}: `
-      if (href === undefined) continue
-      if (href === '') problems.push(`${where}a link has an empty href`)
-      else if (href === '#') problems.push(`${where}a link points at a bare #`)
-      else if (href.startsWith('#')) {
-        if (!idsByUrl.get(url)?.has(decodeURIComponent(href.slice(1)))) {
-          problems.push(`${where}${href} matches no element on the page`)
-        }
-      } else if (/^https?:\/\//i.test(href)) {
-        const host = new URL(href).hostname.replace(/\.$/, '')
-        if (!href.startsWith('https://')) problems.push(`${where}${href} is not https`)
-        if (/(^|\.)example\.(com|org|net)$/i.test(host)) {
-          problems.push(`${where}${href} is a placeholder host, example.com`)
-        }
-      } else if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+  const safeDecode = (text: string): string | undefined => {
+    try {
+      return decodeURIComponent(text)
+    } catch {
+      return undefined
+    }
+  }
+
+  const checkTarget = (where: string, href: string, kind: 'page' | 'file') => {
+    if (href === '') return void problems.push(`${where}a ${kind} link has an empty target`)
+    if (href === '#') return void problems.push(`${where}a link points at a bare #`)
+    if (href.startsWith('#')) {
+      const id = safeDecode(href.slice(1))
+      if (id === undefined || !idsByUrl.get(currentUrl)?.has(id)) {
+        problems.push(`${where}${href} matches no element on the page`)
+      }
+      return
+    }
+    if (/^https?:\/\//i.test(href)) {
+      let host: string
+      try {
+        host = new URL(href).hostname.replace(/\.$/, '')
+      } catch {
+        return void problems.push(`${where}${href} is not a valid URL`)
+      }
+      if (!href.startsWith('https://')) problems.push(`${where}${href} is not https`)
+      if (/(^|\.)example\.(com|org|net)$/i.test(host)) {
+        problems.push(`${where}${href} is a placeholder host, example.com`)
+      }
+      return
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+      // mailto: and tel: are fine on a link; anything else is not.
+      if (!/^(mailto|tel):/i.test(href))
         problems.push(`${where}${href} uses a scheme other than https`)
-      } else if (href.startsWith('/')) {
-        const [path = '', fragment] = href.split('#')
-        if (path !== base && !path.startsWith(`${base}/`)) {
-          problems.push(`${where}${href} is outside the base path ${base}`)
-          continue
-        }
-        const target = resolveTarget(path)
-        if (!target) problems.push(`${where}${href} does not exist`)
-        else if (fragment) {
-          const ids = idsByUrl.get(pageUrl(dist, target, base))
-          if (!ids?.has(decodeURIComponent(fragment))) {
-            problems.push(`${where}${href} points at #${fragment}, which is not on that page`)
+      return
+    }
+    if (href.startsWith('//')) return void problems.push(`${where}${href} is protocol-relative`)
+    if (!href.startsWith('/')) {
+      return void problems.push(`${where}${href} is a relative link; use a path from ${base}`)
+    }
+    const [beforeFragment = '', fragment] = href.split('#')
+    const path = beforeFragment.split('?')[0]!
+    if (path !== base && !path.startsWith(`${base}/`)) {
+      return void problems.push(`${where}${href} is outside the base path ${base}`)
+    }
+    if (path.split('/').includes('..')) {
+      return void problems.push(`${where}${href} climbs out of the site with ..`)
+    }
+    const target = resolveTarget(path)
+    if (!target) return void problems.push(`${where}${href} does not exist`)
+    if (fragment && kind === 'page') {
+      const id = safeDecode(fragment)
+      const ids = idsByUrl.get(pageUrl(dist, target, base))
+      if (id === undefined || !ids?.has(id)) {
+        problems.push(`${where}${href} points at #${fragment}, which is not on that page`)
+      }
+    }
+  }
+
+  let currentUrl = ''
+  for (const { url, html } of pages) {
+    currentUrl = url
+    const where = `${url}: `
+    for (const tag of html.matchAll(
+      new RegExp(`<(a|link|img|script|source)(?=[\\s>])${TAG_BODY}>`, 'gi'),
+    )) {
+      const name = tag[1]!.toLowerCase()
+      const attrs = attributes(tag[2]!)
+      if (name === 'a') {
+        const href = attrs.get('href')
+        if (href !== undefined) checkTarget(where, href, 'page')
+      } else {
+        for (const attr of name === 'link'
+          ? ['href']
+          : name === 'source'
+            ? ['src', 'srcset']
+            : ['src']) {
+          const value = attrs.get(attr)
+          // srcset holds "url descriptor, url descriptor"; check each url.
+          if (value === undefined) continue
+          for (const part of attr === 'srcset' ? value.split(',') : [value]) {
+            const target = part.trim().split(/\s+/)[0]
+            if (target) checkTarget(where, target, 'file')
           }
         }
       }

@@ -125,6 +125,14 @@ describe('the CLIs', () => {
     expect(bad.stderr).toMatch(/does not match/)
   })
 
+  it('check exits 1 when --against is given without a value, instead of skipping the comparison', () => {
+    const { from, dest } = workspace()
+    run('sync-openapi.ts', '--from', from, '--tag', 'v1.0.0', '--dir', dest)
+    const r = run('check-openapi.ts', '--dir', dest, '--against')
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/--against/)
+  })
+
   it('sync exits 1 with a message when arguments are missing', () => {
     const r = run('sync-openapi.ts')
     expect(r.status).toBe(1)

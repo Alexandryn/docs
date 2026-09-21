@@ -1,29 +1,49 @@
 ---
 title: Read on another device
-description: Open your library from a phone, tablet, or second computer on your home network.
+description: Open your library from a phone, tablet, or second computer on your home network, and pair the device.
 ---
 
 By default Alexandryn listens on the machine it runs on and nowhere else. Reading from
-another device means turning network access on, and pairing the device.
+another device means making it reachable from your network, and then pairing the device.
+Alexandryn always requires a login, whatever the address.
 
-## Turn on network access
+## Which setup can do this
 
-Alexandryn always requires a login, and it will not listen beyond your own machine
-until you turn network access on. How far you can go depends on the address it
-listens on:
+- **The desktop app** listens on its own computer only. It has no setting to listen
+  more widely. To read from other devices, run Alexandryn on a server with Docker.
+- **Docker** lets you choose which network interface the port is published on. That
+  is how you make it reachable.
 
-- A **private address**, such as one on your home network, can run without TLS.
-- A **publicly reachable address** requires TLS. Alexandryn refuses to start without it.
+## Make it reachable with Docker
 
-For the two supported ways to set up TLS, and what each one needs, see
-[Exposing Alexandryn beyond your machine](/docs/security/exposing-alexandryn/).
+Read [Exposing Alexandryn beyond your machine](/docs/security/exposing-alexandryn/)
+first. The short version: on a home network the server will run over plain HTTP, which
+means your password crosses the network unencrypted. Putting TLS in front of it is the
+recommended setup.
+
+Then, in your `docker-compose.override.yml`, change the published port. The example
+file publishes it on this machine only:
+
+```yaml
+services:
+  backend:
+    ports:
+      - '127.0.0.1:8080:8080'
+```
+
+Replace `127.0.0.1` with the address of this machine's home network interface, for
+example `192.168.1.50`, and start it again with `docker compose --profile bundled-db up -d`.
+Use that specific address and not a bare `8080:8080`, which publishes the port on every
+interface, including one that faces the internet if the machine has one.
+
+Do not forward this port from your router to the internet without TLS in front of it.
 
 ## Pair the device
 
 Other devices do not use your account password. A device pairs with a code:
 
-1. On a device that is already signed in, open the settings and start a pairing. It
-   shows a code.
+1. On a device that is already signed in, open the network settings and start a pairing.
+   It shows a code.
 2. On the new device, scan the code or type it in.
 3. From then on the new device has its own credential. It never sees or handles your
    password.

@@ -29,13 +29,6 @@ This recreates the `backend` container from the new source. The `postgres` conta
 and both named volumes are untouched. Migrations run as part of the container's normal
 start.
 
-If you set up Compose to use a published image instead of building, pull it first:
-
-```sh
-docker compose pull
-docker compose --profile bundled-db up -d
-```
-
 ## Check that it started
 
 Run `docker compose ps`. The `backend` service should show `healthy` within a few

@@ -40,4 +40,4 @@
 
 ### Checkpoint C: reviewers and sign-off
 
-- [ ] **T6: Website points at the docs site** (S, website repo)
+- [x] **T6: Website points at the docs site** (S, website repo): done on the website's `feat/link-docs-site` branch

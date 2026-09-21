@@ -6,6 +6,10 @@ const value = (flag: string) => (argv.includes(flag) ? argv[argv.indexOf(flag) +
 
 const dir = resolve(value('--dir') ?? resolve(import.meta.dirname, '../openapi'))
 const against = value('--against')
+if (argv.includes('--against') && (against === undefined || against.startsWith('--'))) {
+  console.error('check-openapi: --against needs the path of the source openapi.yaml')
+  process.exit(1)
+}
 const problems = checkOpenapi({ dir, against: against ? resolve(against) : undefined })
 if (problems.length > 0) {
   console.error('check-openapi: failed')

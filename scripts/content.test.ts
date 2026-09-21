@@ -52,6 +52,39 @@ describe('the pages', () => {
   })
 })
 
+describe('load-bearing statements are present in full', () => {
+  const page = (name: string) => readFileSync(join(docsDir, name), 'utf8')
+
+  it('tells a Docker reader to remove the developer DATABASE_URL and set POSTGRES_PASSWORD', () => {
+    const text = page('getting-started/run-with-docker.md')
+    expect(text).toMatch(/Delete that line or comment it out/)
+    expect(text).toMatch(/`POSTGRES_PASSWORD`/)
+  })
+
+  it('does not present plain HTTP on a private address as a recommendation', () => {
+    for (const name of ['security/exposing-alexandryn.md', 'using/read-on-another-device.md']) {
+      expect(page(name), name).toMatch(/password[^.]*(crosses|clear|unencrypted)/i)
+    }
+    expect(page('security/exposing-alexandryn.md')).toMatch(/not a recommendation/)
+  })
+
+  it('warns that backups are sensitive and says how to protect them', () => {
+    const text = page('admin/back-up-and-restore.md')
+    expect(text).toMatch(/umask 077/)
+    expect(text).toMatch(/Encrypt the copies/)
+  })
+
+  it('says the restore steps are untested, and how to find the real volume name', () => {
+    const text = page('admin/back-up-and-restore.md')
+    expect(text).toMatch(/have not been tested/)
+    expect(text).toMatch(/docker volume ls/)
+  })
+
+  it('says the desktop app listens on its own computer only', () => {
+    expect(page('using/read-on-another-device.md')).toMatch(/listens on its own computer only/)
+  })
+})
+
 describe('contentProblems catches what it is for (positive controls)', () => {
   const page = (body: string, description = 'A description that is long enough to pass.') =>
     `---\ntitle: T\ndescription: ${description}\n---\n\n${body}\n`

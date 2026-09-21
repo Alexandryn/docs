@@ -10,9 +10,10 @@ simpler.
 
 ## What you need
 
-- Docker with the Compose plugin. Check with `docker compose version`. The older
-  standalone `docker-compose` script is not what this configuration uses, because
-  it relies on Compose profiles.
+- Docker with the Compose plugin (Compose v2). Check with `docker compose version`.
+  The older standalone `docker-compose` script is not what this configuration uses.
+  The file relies on `depends_on` with `required: false`, which needs a recent v2
+  release (2.20 or later).
 - A machine that can stay on: a home server, a NAS that supports Docker, or a small
   always-on computer. Alexandryn is lightweight and does not need server hardware.
 - Disk space for the images, plus room for your library's database. The
@@ -29,16 +30,27 @@ or download only `docker-compose.yml`, `docker-compose.override.yml.example`, an
 
 ## Configure it
 
-Copy `.env.example` to `.env` in the same directory as `docker-compose.yml`, then set:
+Copy `.env.example` to `.env` in the same directory as `docker-compose.yml`, then edit it.
+
+The example file starts with a `DATABASE_URL` line for the developer stack that
+Alexandryn's own developers use. **Delete that line or comment it out** before you use
+the bundled database. A `DATABASE_URL` in `.env` takes precedence over the bundled
+database, and the server would then try to reach a database that does not exist inside
+its container.
+
+Then set:
 
 - `OPEN_LIBRARY_USER_AGENT`. Required, no default. Open Library asks every client
   to identify itself, so set a descriptive value such as
   `MyAlexandryn/1.0 (your contact address)`.
-- `POSTGRES_PASSWORD`. Required for the bundled database, no default. Choose a real
-  password. Compose refuses to start the bundled database without one, on purpose.
+- `POSTGRES_PASSWORD`. Required for the bundled database, no default. The example file
+  lists it empty; fill it in with a real password. Compose refuses to start without one,
+  on purpose.
 
-If you already run your own PostgreSQL server, set `DATABASE_URL` in `.env` instead
-of `POSTGRES_PASSWORD`, and leave out the `bundled-db` profile in the next step.
+If you already run your own PostgreSQL server, keep the `DATABASE_URL` line and point
+it at your server instead. leave out the `bundled-db` profile in the next step. If Compose still asks for
+`POSTGRES_PASSWORD`, set any value. This external-database path has not been tested for
+these instructions; the bundled database is the one they were written for.
 
 ## Start it
 
@@ -78,8 +90,8 @@ This publishes the server at `http://localhost:8080` on that machine only. Open 
 in a browser to [create the administrator account](/docs/getting-started/first-run-setup/).
 
 To reach Alexandryn from other devices, see
-[Read on another device](/docs/using/read-on-another-device/) and
-[Exposing Alexandryn beyond your machine](/docs/security/exposing-alexandryn/).
+[Read on another device](/docs/using/read-on-another-device/), and read
+[Exposing Alexandryn beyond your machine](/docs/security/exposing-alexandryn/) first.
 
 ## Check that it is healthy
 
