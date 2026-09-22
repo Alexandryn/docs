@@ -119,3 +119,21 @@ Two named volumes hold everything that must survive a restart or an update:
 
 Both volumes survive `docker compose down` and image rebuilds. `docker compose down -v`
 deletes them. Use it only on purpose, and only after a backup.
+
+## If the container never becomes healthy
+
+Versions 1.0.0 and 1.0.1 created the `app-data` volume owned by `root` on real Docker,
+so the server could not write its credential key and restarted in a loop. Version 1.0.2
+fixes the image, but an `app-data` volume already created by one of those versions is
+still owned by `root` and needs fixing once:
+
+```sh
+docker compose --profile bundled-db down
+docker run --rm -v alexandryn_app-data:/data alpine chown -R 100:101 /data
+docker compose --profile bundled-db up -d
+```
+
+Use the volume name `docker volume ls` shows you if it differs from
+`alexandryn_app-data`. `100:101` is the `app` user and group the image creates; if the
+container still is not healthy afterwards, check its logs
+(`docker compose logs backend`) for a different cause.
