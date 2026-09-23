@@ -32,9 +32,16 @@ services:
 ```
 
 Replace `127.0.0.1` with the address of this machine's home network interface, for
-example `192.168.1.50`, and start it again with `docker compose --profile bundled-db up -d`.
+example `192.168.1.50`, and also uncomment the `CORS_ALLOWED_ORIGINS` line right below
+it in the same file, set to that same address (`http://192.168.1.50:8080`). The server
+already trusts the address it listens on inside Docker's own network, but a browser on
+your LAN reaches it through the published port instead, at a different address the
+server has no way to know on its own — without this, every request a browser makes,
+including creating the first account, is rejected with "request origin is not allowed".
 Use that specific address and not a bare `8080:8080`, which publishes the port on every
 interface, including one that faces the internet if the machine has one.
+
+Start it again with `docker compose --profile bundled-db up -d` once both lines are set.
 
 Do not forward this port from your router to the internet without TLS in front of it.
 
